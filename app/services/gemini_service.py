@@ -5,20 +5,20 @@ Handles topic generation and blog content creation
 import json
 import time
 from typing import List, Dict, Optional
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import settings
 from config.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-# Configure Gemini API
-genai.configure(api_key=settings.GEMINI_API_KEY)
 
 
 class GeminiService:
     """Service for interacting with Google Gemini API"""
 
     def __init__(self):
+        # Initialize Gemini client (new SDK)
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self.model_name = settings.GEMINI_MODEL
         self.temperature = settings.GEMINI_TEMPERATURE
         self.timeout = settings.API_TIMEOUT
@@ -120,16 +120,16 @@ class GeminiService:
 
         # Call Gemini API with retry logic
         def call_api():
-            model = genai.GenerativeModel(
-                model_name=self.model_name,
-                generation_config={
-                    "temperature": self.temperature,
-                    "max_output_tokens": settings.GEMINI_MAX_TOKENS_TOPICS,
-                    "response_mime_type": "application/json",
-                    "response_schema": response_schema,
-                }
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=settings.GEMINI_MAX_TOKENS_TOPICS,
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                )
             )
-            response = model.generate_content(prompt)
             return response.text
 
         response_text = self._call_with_retry(call_api)
@@ -226,16 +226,16 @@ class GeminiService:
 
         # Call Gemini API with retry logic
         def call_api():
-            model = genai.GenerativeModel(
-                model_name=self.model_name,
-                generation_config={
-                    "temperature": self.temperature,
-                    "max_output_tokens": settings.GEMINI_MAX_TOKENS_BLOG,
-                    "response_mime_type": "application/json",
-                    "response_schema": response_schema,
-                }
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=settings.GEMINI_MAX_TOKENS_BLOG,
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                )
             )
-            response = model.generate_content(prompt)
             return response.text
 
         response_text = self._call_with_retry(call_api)
@@ -513,45 +513,39 @@ IMPORTANT: Return ONLY the JSON object, no additional text or markdown formattin
             # Build image generation prompt
             prompt = self._build_image_generation_prompt(blog_title, blog_description, keywords)
 
-            # Generate image using Gemini
+            # Generate image using Imagen (new SDK approach)
             def generate_image():
-                model = genai.GenerativeModel(
-                    model_name=settings.IMAGE_MODEL
+                # Use generate_image (singular) for the new SDK
+                response = self.client.models.generate_image(
+                    model='imagen-3.0-generate-001',  # Use Imagen 3.0 for image generation
+                    prompt=prompt,
+                    config=types.GenerateImageConfig(
+                        number_of_images=1,
+                        aspect_ratio='16:9',
+                        safety_filter_level='BLOCK_MEDIUM_AND_ABOVE',
+                        person_generation='ALLOW_ADULT'
+                    )
                 )
-
-                response = model.generate_content(
-                    prompt,
-                    generation_config={
-                        "temperature": 0.7,
-                        "response_mime_type": "image/png"
-                    }
-                )
-
                 return response
 
             # Call with retry
             response = self._call_with_retry(generate_image)
 
             # Extract image from response
-            if not response or not response.candidates:
-                logger.error("No image generated in response")
+            if not response or not hasattr(response, 'generated_images') or not response.generated_images:
+                logger.error("No images generated in response")
                 return None
 
-            # Get the first candidate's content
-            candidate = response.candidates[0]
-            if not candidate.content or not candidate.content.parts:
-                logger.error("No content parts in response")
-                return None
+            # Get the first generated image
+            generated_image = response.generated_images[0]
 
-            # Find image data in parts
-            image_data = None
-            for part in candidate.content.parts:
-                if part.inline_data and part.inline_data.mime_type.startswith('image'):
-                    image_data = part.inline_data.data
-                    break
-
-            if not image_data:
-                logger.error("No image data found in response parts")
+            # Get image data (bytes)
+            if hasattr(generated_image, 'image') and hasattr(generated_image.image, 'image_bytes'):
+                image_data = generated_image.image.image_bytes
+            elif hasattr(generated_image, 'image_bytes'):
+                image_data = generated_image.image_bytes
+            else:
+                logger.error("Could not extract image bytes from response")
                 return None
 
             # Convert bytes to PIL Image

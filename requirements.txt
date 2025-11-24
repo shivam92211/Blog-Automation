@@ -12,11 +12,11 @@ apscheduler==3.10.4
 pytz==2024.1
 
 # AI/ML
-google-generativeai==0.8.3
+google-generativeai==0.8.5
 
 # Image Processing & Upload
-Pillow==10.1.0
-imgurpython==1.1.7
+Pillow==11.0.0
+boto3==1.35.0
 
 # HTTP Client
 requests==2.31.0

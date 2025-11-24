@@ -94,13 +94,24 @@ API_MAX_RETRIES = 3
 
 # Image Generation Settings
 ENABLE_BLOG_IMAGES = os.getenv("ENABLE_BLOG_IMAGES", "true").lower() == "true"
-IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gemini-2.5-flash-image")
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen-3.0-generate-001")  # Imagen 3.0 for image generation
 IMAGE_ASPECT_RATIO = os.getenv("IMAGE_ASPECT_RATIO", "16:9")
 IMAGE_TEMP_DIR = BASE_DIR / "temp_images"
 
-# Imgur Upload Service
-IMGUR_CLIENT_ID = os.getenv("IMGUR_CLIENT_ID")
-# Note: IMGUR_CLIENT_ID is optional - if not set, images won't be generated
+# AWS S3 Upload Service
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+# Validate AWS credentials if image generation is enabled
+if ENABLE_BLOG_IMAGES:
+    if not AWS_S3_BUCKET_NAME:
+        raise ValueError("AWS_S3_BUCKET_NAME must be set when ENABLE_BLOG_IMAGES is true")
+    if not AWS_ACCESS_KEY_ID:
+        raise ValueError("AWS_ACCESS_KEY_ID must be set when ENABLE_BLOG_IMAGES is true")
+    if not AWS_SECRET_ACCESS_KEY:
+        raise ValueError("AWS_SECRET_ACCESS_KEY must be set when ENABLE_BLOG_IMAGES is true")
 
 # MongoDB Connection Settings
 MONGODB_MAX_POOL_SIZE = 10

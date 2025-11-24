@@ -10,7 +10,7 @@ from app.models import (
     get_db, Topic, Blog, Category,
     TopicStatus, BlogStatus, Log, JobType, JobStatus
 )
-from app.services import gemini_service, hashnode_service, image_upload_service
+from app.services import gemini_service, hashnode_service
 from config import settings
 from config.logging_config import get_logger
 
@@ -67,16 +67,6 @@ class BlogPublisherJob:
 
                 # Step 8: Store blog in database
                 blog = self._store_blog(db, topic, blog_data)
-
-                # Step 8.5: Generate and upload cover image (NEW)
-                cover_image_url = self._generate_and_upload_cover_image(blog)
-                if cover_image_url:
-                    # Update blog with cover image URL
-                    db.blogs.update_one(
-                        {"_id": blog["_id"]},
-                        {"$set": {"cover_image_url": cover_image_url}}
-                    )
-                    blog["cover_image_url"] = cover_image_url
 
                 # Step 9-10: Publish to Hashnode and update database
                 self._publish_and_update(db, blog, topic)
@@ -278,13 +268,12 @@ class BlogPublisherJob:
         logger.info("Publishing to Hashnode...")
 
         try:
-            # Publish to Hashnode with cover image
+            # Publish to Hashnode without cover image
             publish_result = hashnode_service.publish_post(
                 title=blog["title"],
                 content=blog["content"],
                 tags=blog["tags"],
-                meta_description=blog["meta_description"],
-                cover_image_url=blog.get("cover_image_url")
+                meta_description=blog["meta_description"]
             )
 
             logger.info(f"✓ Published to Hashnode: {publish_result['url']}")
@@ -315,10 +304,6 @@ class BlogPublisherJob:
             )
 
             logger.info("✓ Database updated with publish details")
-
-            # Cleanup temporary image file after successful publish
-            if blog.get("cover_image_local_path"):
-                self._cleanup_temp_image(blog["cover_image_local_path"])
 
         except Exception as e:
             logger.error(f"Failed to publish to Hashnode: {e}")
@@ -355,72 +340,6 @@ class BlogPublisherJob:
             details=details or {}
         )
         db.logs.insert_one(log_doc)
-
-    def _generate_and_upload_cover_image(self, blog: dict) -> Optional[str]:
-        """
-        Generate cover image and upload to public hosting
-
-        Args:
-            blog: Blog document with title, tags, etc.
-
-        Returns:
-            Public URL of uploaded image, or None if failed
-        """
-        if not settings.ENABLE_BLOG_IMAGES:
-            logger.info("Blog image generation is disabled")
-            return None
-
-        if not settings.IMGUR_CLIENT_ID:
-            logger.warning("IMGUR_CLIENT_ID not set - skipping image generation")
-            return None
-
-        logger.info("Generating cover image for blog...")
-
-        try:
-            # Step 1: Generate image using Gemini
-            image_path = gemini_service.generate_blog_cover_image(
-                blog_title=blog["title"],
-                blog_description=blog.get("meta_description"),
-                keywords=blog.get("tags", [])
-            )
-
-            if not image_path:
-                logger.warning("Image generation failed - continuing without image")
-                return None
-
-            # Store local path in blog for later cleanup
-            blog["cover_image_local_path"] = image_path
-
-            # Step 2: Upload to Imgur
-            image_url = image_upload_service.upload_to_imgur(
-                image_path=image_path,
-                title=blog["title"]
-            )
-
-            if not image_url:
-                logger.warning("Image upload failed - cleaning up local file")
-                image_upload_service.cleanup_local_image(image_path)
-                return None
-
-            logger.info(f"✓ Cover image uploaded successfully: {image_url}")
-            return image_url
-
-        except Exception as e:
-            logger.error(f"Failed to generate/upload cover image: {e}", exc_info=True)
-            return None
-
-    def _cleanup_temp_image(self, image_path: str):
-        """
-        Delete temporary image file after successful publishing
-
-        Args:
-            image_path: Path to temporary image file
-        """
-        try:
-            image_upload_service.cleanup_local_image(image_path)
-        except Exception as e:
-            # Don't fail the job for cleanup errors
-            logger.warning(f"Failed to cleanup temp image: {e}")
 
 
 # Singleton instance
