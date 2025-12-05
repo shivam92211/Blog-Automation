@@ -27,7 +27,7 @@ if [ ! -d "venv" ] || [ ! -f "venv/bin/activate" ]; then
 
         # Check if virtualenv is installed
         if ! command -v virtualenv &> /dev/null && ! python3 -m virtualenv --version &> /dev/null; then
-            echo "Installing virtualenv..."
+            echo "Installing virtual env..."
             if ! python3 -m pip install --user virtualenv 2>/dev/null; then
                 echo "Trying with --break-system-packages flag..."
                 python3 -m pip install --user --break-system-packages virtualenv
