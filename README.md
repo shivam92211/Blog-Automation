@@ -235,14 +235,51 @@ ENABLE_BLOG_IMAGES=false
 
 ## Usage
 
-### Basic Usage
+### Quick Start with Makefile (Recommended)
+
+The easiest way to use the blog automation with **automatic error recovery**:
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
+# Complete setup (first time only)
+make setup
 
-# Run the script
-python3 run_blog_automation.py
+# Run the blog automation (auto-recovers from missing categories!)
+make run
+
+# Or use safe mode (never fails, perfect for cron jobs)
+make run-safe
+
+# Check database status
+make check-db
+
+# View all available commands
+make help
+```
+
+**New Feature:** `make run` now automatically initializes the database if categories are missing! See [AUTO_RECOVERY.md](AUTO_RECOVERY.md) for details.
+
+### Makefile Commands
+
+```bash
+# Setup Commands
+make setup         # Complete setup (install + init-db)
+make install       # Install dependencies only
+make init-db       # Initialize database (interactive)
+make init-db-force # Force reinitialize database
+make check-db      # Check database connection
+
+# Run Commands
+make run           # Run the blog automation script
+
+# Docker Commands
+make docker-build  # Build Docker image
+make docker-run    # Run in Docker container
+make docker-stop   # Stop Docker container
+
+# Utility Commands
+make clean         # Clean up venv and cache
+make logs          # View application logs
+make test          # Run tests
 ```
 
 ### Alternative Methods
@@ -255,8 +292,11 @@ chmod +x run.sh
 
 **Direct execution:**
 ```bash
-chmod +x run_blog_automation.py
-./run_blog_automation.py
+# Activate virtual environment
+source venv/bin/activate
+
+# Run the script
+python3 run_blog_automation.py
 ```
 
 ### What Happens When You Run
@@ -419,8 +459,35 @@ Blog stored (sleeping for 26s)
 
 ### Exit Codes
 
-- `0` - Success
-- `1` - Error (no unique topic, generation failed, publishing failed)
+The script returns specific exit codes to help with automation and error handling:
+
+| Code | Meaning | Solution |
+|------|---------|----------|
+| `0` | Success | Blog published successfully |
+| `1` | General error | Check logs for details |
+| `2` | User interrupted | Script was stopped by user (Ctrl+C) |
+| `3` | No categories in database | Run `make init-db` or `python3 init_categories.py` |
+| `4` | No unique topic found | All 5 attempts produced duplicate topics, try again later |
+| `5` | Blog generation failed | Gemini AI failed to generate content, check API key |
+| `6` | Publishing failed | Hashnode API error, check token and publication ID |
+
+**Checking Exit Codes:**
+```bash
+# Run script and check exit code
+make run
+echo "Exit code: $?"
+
+# Or with direct Python
+python3 run_blog_automation.py
+echo "Exit code: $?"
+
+# Use in shell scripts
+if make run; then
+    echo "Success!"
+else
+    echo "Failed with exit code: $?"
+fi
+```
 
 ---
 
@@ -428,11 +495,18 @@ Blog stored (sleeping for 26s)
 
 ### Common Issues
 
-#### 1. "No active categories found in database"
+#### 1. "No active categories found in database" (Exit Code: 3)
 
 **Solution:**
 ```bash
+# Using Makefile (recommended)
+make init-db
+
+# Or directly
 python3 init_categories.py
+
+# Force reinitialize (non-interactive)
+python3 init_categories.py --force
 ```
 
 #### 2. "ModuleNotFoundError: No module named 'X'"

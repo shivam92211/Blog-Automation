@@ -25,7 +25,7 @@ class GeminiService:
 
     def _call_with_retry(self, func, *args, **kwargs):
         """
-        Call a function with exponential backoff retry logic
+        Call a function with progressive retry delays: 1min, 5min, 10min
 
         Args:
             func: Function to call
@@ -37,6 +37,9 @@ class GeminiService:
         Raises:
             Exception: If all retries exhausted
         """
+        # Progressive retry delays: 1 min, 5 min, 10 min
+        retry_delays = [60, 300, 600]  # seconds
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 return func(*args, **kwargs)
@@ -53,10 +56,11 @@ class GeminiService:
                     f"API call failed (attempt {attempt}/{self.max_retries}): {e}"
                 )
 
-                # If not last attempt, wait and retry
+                # If not last attempt, wait and retry with progressive delays
                 if attempt < self.max_retries:
-                    wait_time = 2 ** attempt  # Exponential backoff: 2, 4, 8 seconds
-                    logger.info(f"Retrying in {wait_time} seconds...")
+                    wait_time = retry_delays[attempt - 1]  # Get delay for this attempt
+                    minutes = wait_time // 60
+                    logger.info(f"⏳ Waiting {minutes} minute(s) before retry...")
                     time.sleep(wait_time)
                 else:
                     logger.error("All retry attempts exhausted")

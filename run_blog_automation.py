@@ -32,6 +32,15 @@ from app.services.image_upload_service import ImageUploadService
 from app.utils.uniqueness import calculate_similarity, generate_topic_hash
 from bson import ObjectId
 
+# Exit codes
+EXIT_SUCCESS = 0
+EXIT_ERROR = 1
+EXIT_USER_INTERRUPT = 2
+EXIT_NO_CATEGORIES = 3
+EXIT_NO_UNIQUE_TOPIC = 4
+EXIT_BLOG_GENERATION_FAILED = 5
+EXIT_PUBLISH_FAILED = 6
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -70,6 +79,8 @@ class BlogAutomationRunner:
         categories = list(self.db.categories.find({"is_active": True}))
 
         if not categories:
+            logger.error("No active categories found in database")
+            logger.error("Please run: make init-db (or python3 init_categories.py)")
             raise Exception("No active categories found in database")
 
         category = random.choice(categories)
@@ -314,8 +325,12 @@ class BlogAutomationRunner:
             logger.error(f"❌ Error during publishing: {str(e)}")
             return False
 
-    def run(self):
-        """Main execution flow"""
+    def run(self) -> int:
+        """Main execution flow
+
+        Returns:
+            Exit code (0 for success, non-zero for errors)
+        """
         logger.info("=" * 60)
         logger.info("🚀 BLOG AUTOMATION SCRIPT STARTED")
         logger.info("=" * 60)
@@ -323,44 +338,70 @@ class BlogAutomationRunner:
 
         try:
             # Step 1: Get category
-            category = self.get_random_category()
+            try:
+                category = self.get_random_category()
+            except Exception as e:
+                logger.error(f"Failed to get category: {str(e)}")
+                return EXIT_NO_CATEGORIES
+
             self.sleep("Category selected")
 
             # Step 2: Find unique topic
             topic = self.find_unique_topic(category['name'], category.get('description', ''))
             if not topic:
                 logger.error("❌ FAILED: Could not find a unique topic")
-                sys.exit(1)
+                return EXIT_NO_UNIQUE_TOPIC
 
             self.sleep("Unique topic found")
 
             # Step 3: Store topic
-            topic_id = self.store_topic(topic, category)
+            try:
+                topic_id = self.store_topic(topic, category)
+            except Exception as e:
+                logger.error(f"Failed to store topic: {str(e)}")
+                return EXIT_ERROR
+
             self.sleep("Topic stored")
 
             # Step 4: Generate blog
-            blog_data = self.generate_blog(topic_id, topic, category)
-            if not blog_data:
-                logger.error("❌ FAILED: Could not generate blog content")
-                sys.exit(1)
+            try:
+                blog_data = self.generate_blog(topic_id, topic, category)
+                if not blog_data:
+                    logger.error("❌ FAILED: Could not generate blog content")
+                    return EXIT_BLOG_GENERATION_FAILED
+            except Exception as e:
+                logger.error(f"Failed to generate blog: {str(e)}")
+                return EXIT_BLOG_GENERATION_FAILED
 
             self.sleep("Blog content generated")
 
             # Step 5: Store blog
-            blog_id = self.store_blog(blog_data, topic_id, category)
+            try:
+                blog_id = self.store_blog(blog_data, topic_id, category)
+            except Exception as e:
+                logger.error(f"Failed to store blog: {str(e)}")
+                return EXIT_ERROR
+
             self.sleep("Blog stored")
 
             # Step 6: Publish blog
-            success = self.publish_blog(blog_id, blog_data)
-            if not success:
-                logger.error("❌ FAILED: Could not publish blog")
-                sys.exit(1)
+            try:
+                success = self.publish_blog(blog_id, blog_data)
+                if not success:
+                    logger.error("❌ FAILED: Could not publish blog")
+                    return EXIT_PUBLISH_FAILED
+            except Exception as e:
+                logger.error(f"Failed to publish blog: {str(e)}")
+                return EXIT_PUBLISH_FAILED
 
             # Update topic status to completed
-            self.db.topics.update_one(
-                {"_id": ObjectId(topic_id)},
-                {"$set": {"status": "COMPLETED", "updated_at": datetime.utcnow()}}
-            )
+            try:
+                self.db.topics.update_one(
+                    {"_id": ObjectId(topic_id)},
+                    {"$set": {"status": "COMPLETED", "updated_at": datetime.utcnow()}}
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update topic status: {str(e)}")
 
             # Success!
             elapsed_time = time.time() - start_time
@@ -368,15 +409,21 @@ class BlogAutomationRunner:
             logger.info("✅ BLOG AUTOMATION COMPLETED SUCCESSFULLY!")
             logger.info(f"⏱️  Total time: {elapsed_time:.2f} seconds")
             logger.info("=" * 60)
+            return EXIT_SUCCESS
 
         except KeyboardInterrupt:
             logger.warning("\n⚠️  Script interrupted by user")
-            sys.exit(1)
+            return EXIT_USER_INTERRUPT
         except Exception as e:
             logger.error(f"\n❌ FATAL ERROR: {str(e)}", exc_info=True)
-            sys.exit(1)
+            return EXIT_ERROR
 
 
 if __name__ == "__main__":
-    runner = BlogAutomationRunner()
-    runner.run()
+    try:
+        runner = BlogAutomationRunner()
+        exit_code = runner.run()
+        sys.exit(exit_code)
+    except Exception as e:
+        logger.error(f"Failed to initialize runner: {str(e)}")
+        sys.exit(EXIT_ERROR)
