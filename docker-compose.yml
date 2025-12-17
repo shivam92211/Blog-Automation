@@ -1,0 +1,82 @@
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: blog-automation-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-admin123}
+      MONGO_INITDB_DATABASE: ${MONGO_DB_NAME:-blog_automation}
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - blog-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Blog Automation Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blog-automation-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # MongoDB Configuration
+      MONGODB_URL: mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-admin123}@mongodb:27017
+      MONGODB_DB_NAME: ${MONGO_DB_NAME:-blog_automation}
+
+      # API Keys (from .env file)
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      NEWSDATA_API_KEY: ${NEWSDATA_API_KEY}
+
+      # Hashnode Configuration
+      HASHNODE_API_TOKEN: ${HASHNODE_API_TOKEN}
+      HASHNODE_PUBLICATION_ID: ${HASHNODE_PUBLICATION_ID}
+
+      # AWS S3 (optional)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+
+      # Application Configuration
+      ENABLE_BLOG_IMAGES: ${ENABLE_BLOG_IMAGES:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # Job Scheduling
+      TOPIC_GENERATION_CRON: ${TOPIC_GENERATION_CRON:-0 22 * * 2}
+      BLOG_PUBLISHING_CRON: ${BLOG_PUBLISHING_CRON:-45 22 * * *}
+    volumes:
+      - ./logs:/app/logs
+      - ./temp_images:/app/temp_images
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - blog-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  blog-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
