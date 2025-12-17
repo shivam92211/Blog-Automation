@@ -1,492 +1,631 @@
-# Blog Automation System
+# Blog Automation Script
 
-An intelligent blog generation and publishing system that automatically:
-- Rotates through categories weekly
-- Generates unique topics using Google Gemini AI
-- Writes comprehensive blog posts daily
-- Publishes to Hashnode automatically
-- Prevents content repetition with smart duplicate detection
-
-## 🏗️ Architecture
-
-```
-blog_automation/
-├── app/
-│   ├── models/          # Database models (SQLAlchemy)
-│   ├── services/        # External API integrations (Gemini, Hashnode)
-│   ├── jobs/            # Scheduled jobs (topic generation, blog publishing)
-│   ├── utils/           # Utilities (uniqueness checker, helpers)
-│   └── api/             # FastAPI REST endpoints
-├── config/              # Configuration and logging
-├── scripts/             # Database initialization and testing
-├── logs/                # Application logs (created at runtime)
-└── main.py             # Application entry point
-```
-
-## 📋 Features
-
-### Automated Workflows
-- **Weekly Topic Generation** (Monday 6 AM): Generates 7 unique topics for the week
-- **Daily Blog Publishing** (Every day 9 AM): Writes and publishes one blog per day
-- **Intelligent Category Rotation**: Ensures balanced content across all categories
-- **Duplicate Detection**: Prevents similar topics using keyword analysis and hashing
-
-### Manual Operations via API
-- View/manage categories
-- List upcoming topics
-- View published blogs
-- Manually trigger jobs
-- Monitor system stats and logs
-
-### Quality Assurance
-- Word count validation (1200-1500 words target)
-- SEO optimization (meta descriptions, tags)
-- Content structure validation
-- Real-time logging and monitoring
-
-## 🚀 Quick Start
-
-### 1. Prerequisites
-
-- Python 3.9+
-- PostgreSQL (or MySQL)
-- Gemini API key ([Get one here](https://makersuite.google.com/app/apikey))
-- Hashnode account with API token ([Get token](https://hashnode.com/settings/developer))
-
-### 2. Installation
-
-```bash
-# Clone or navigate to project directory
-cd blog_automation
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On Linux/Mac:
-source venv/bin/activate
-# On Windows:
-# venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 3. Database Setup
-
-**PostgreSQL:**
-```bash
-# Create database
-createdb blog_automation
-
-# Or using psql:
-psql -U postgres -c "CREATE DATABASE blog_automation;"
-```
-
-**MySQL:**
-```bash
-# Create database
-mysql -u root -p -e "CREATE DATABASE blog_automation CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-```
-
-### 4. Configuration
-
-```bash
-# Copy example environment file
-cp .env.example .env
-
-# Edit .env with your credentials
-nano .env  # or use your preferred editor
-```
-
-**Required environment variables:**
-```env
-# Database (choose one)
-DATABASE_URL=postgresql://user:password@localhost:5432/blog_automation
-# DATABASE_URL=mysql://user:password@localhost:3306/blog_automation
-
-# API Keys
-GEMINI_API_KEY=your_gemini_api_key_here
-HASHNODE_API_TOKEN=your_hashnode_token_here
-HASHNODE_PUBLICATION_ID=your_publication_id_here
-
-# Application Settings
-ENVIRONMENT=development
-LOG_LEVEL=INFO
-ENABLE_SCHEDULER=true
-TIMEZONE=UTC
-```
-
-**Finding your Hashnode Publication ID:**
-1. Go to your Hashnode dashboard
-2. Open browser DevTools (F12)
-3. Go to Network tab
-4. Click on your publication
-5. Look for GraphQL requests - the publication ID will be in the payload
-
-### 5. Initialize Database
-
-```bash
-# Create tables and seed initial categories
-python scripts/init_db.py
-```
-
-This will create:
-- 8 default categories (Blockchain, Web3, AI, etc.)
-- All required database tables
-- Indexes for optimal performance
-
-### 6. Test Setup
-
-```bash
-# Validate configuration
-python scripts/test_setup.py
-```
-
-This tests:
-- Database connection
-- Gemini API authentication
-- Hashnode API authentication
-
-### 7. Run Application
-
-```bash
-# Start the server
-python main.py
-
-# Or using uvicorn directly:
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-The application will:
-- Start the FastAPI server on http://localhost:8000
-- Initialize the job scheduler
-- Schedule automatic jobs
-
-## 📅 Scheduled Jobs
-
-### Topic Generation (Weekly)
-- **Schedule**: Every Monday at 6:00 AM
-- **Duration**: 5-10 minutes
-- **What it does**:
-  1. Selects next category (based on rotation)
-  2. Fetches historical topics (6 months lookback)
-  3. Generates 7 unique topics via Gemini AI
-  4. Validates uniqueness (prevents duplicates)
-  5. Schedules topics for Tuesday-Monday
-  6. Stores in database
-
-### Blog Publishing (Daily)
-- **Schedule**: Every day at 9:00 AM
-- **Duration**: 10-15 minutes
-- **What it does**:
-  1. Fetches today's scheduled topic
-  2. Generates comprehensive blog content (1200-1500 words)
-  3. Validates quality and structure
-  4. Publishes to Hashnode
-  5. Updates database with publication details
-
-## 🔧 API Endpoints
-
-Access the interactive API docs at: http://localhost:8000/docs
-
-### Categories
-- `GET /api/categories` - List all categories
-- `POST /api/categories` - Create new category
-- `PATCH /api/categories/{id}` - Update category
-
-### Topics
-- `GET /api/topics` - List topics (filterable by status)
-- `GET /api/topics/upcoming` - View upcoming scheduled topics
-
-### Blogs
-- `GET /api/blogs` - List blogs (filterable by status)
-- `GET /api/blogs/{id}` - Get full blog details
-
-### Jobs (Manual Triggers)
-- `POST /api/jobs/generate-topics` - Manually generate topics
-- `POST /api/jobs/publish-blog` - Manually publish today's blog
-
-### Scheduler
-- `GET /api/scheduler/jobs` - View scheduled jobs
-- `POST /api/scheduler/run/{job_id}` - Trigger job immediately
-
-### Monitoring
-- `GET /api/stats` - System statistics
-- `GET /api/logs` - Job execution logs
-- `GET /api/health` - Health check
-
-## 📊 Usage Examples
-
-### Add a New Category
-
-```bash
-curl -X POST "http://localhost:8000/api/categories" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Data Science",
-    "description": "Machine learning, data analysis, and statistics",
-    "is_active": true
-  }'
-```
-
-### View Upcoming Topics
-
-```bash
-curl "http://localhost:8000/api/topics/upcoming?days=7"
-```
-
-### Manually Generate Topics
-
-```bash
-curl -X POST "http://localhost:8000/api/jobs/generate-topics"
-```
-
-### Check System Stats
-
-```bash
-curl "http://localhost:8000/api/stats"
-```
-
-### View Recent Logs
-
-```bash
-curl "http://localhost:8000/api/logs?limit=10"
-```
-
-## 🔍 Monitoring & Debugging
-
-### Log Files
-
-Logs are stored in `logs/app.log` with structured JSON format:
-
-```json
-{
-  "timestamp": "2025-11-03T09:15:23Z",
-  "level": "INFO",
-  "job": "blog_publisher",
-  "topic_id": 123,
-  "action": "blog_published",
-  "details": {
-    "word_count": 1450,
-    "hashnode_url": "https://...",
-    "execution_time_seconds": 87
-  }
-}
-```
-
-### View Logs
-
-```bash
-# Real-time monitoring
-tail -f logs/app.log
-
-# Filter by level
-grep "ERROR" logs/app.log
-
-# Pretty print JSON logs
-cat logs/app.log | jq '.'
-```
-
-### Database Queries
-
-```sql
--- Check pending topics
-SELECT * FROM topics WHERE status = 'pending' ORDER BY scheduled_date;
-
--- Check published blogs count
-SELECT COUNT(*) FROM blogs WHERE status = 'published';
-
--- Category usage statistics
-SELECT name, usage_count, last_used_date FROM categories ORDER BY usage_count DESC;
-
--- Recent job logs
-SELECT * FROM logs ORDER BY created_at DESC LIMIT 10;
-```
-
-## 🛠️ Configuration Options
-
-### Scheduling
-
-Edit `config/settings.py`:
-
-```python
-# Topic generation: Every Monday at 6 AM
-TOPIC_GENERATION_SCHEDULE = {
-    "hour": 6,
-    "minute": 0,
-    "day_of_week": "mon"
-}
-
-# Blog publishing: Every day at 9 AM
-BLOG_PUBLISHING_SCHEDULE = {
-    "hour": 9,
-    "minute": 0
-}
-```
-
-### Content Settings
-
-```python
-# Topic generation
-TOPIC_COUNT_PER_WEEK = 7
-SIMILARITY_THRESHOLD = 0.7  # 70% similarity = duplicate
-HISTORY_LOOKBACK_MONTHS = 6
-
-# Blog requirements
-MIN_BLOG_WORD_COUNT = 1000
-MAX_BLOG_WORD_COUNT = 2000
-TARGET_BLOG_WORD_COUNT = 1400
-MIN_TAGS_COUNT = 3
-MAX_TAGS_COUNT = 7
-```
-
-### AI Model Settings
-
-```python
-GEMINI_MODEL = "gemini-1.5-pro"
-GEMINI_TEMPERATURE = 0.7
-API_MAX_RETRIES = 3
-```
-
-## 🚨 Troubleshooting
-
-### Issue: Topics are repetitive
-
-**Solution:**
-1. Check `SIMILARITY_THRESHOLD` (lower = stricter)
-2. Review generation history: `SELECT * FROM generation_history`
-3. Add more variety to category descriptions
-4. Increase `HISTORY_LOOKBACK_MONTHS`
-
-### Issue: Blog quality is poor
-
-**Solution:**
-1. Review Gemini prompt in `app/services/gemini_service.py`
-2. Adjust `GEMINI_TEMPERATURE` (lower = more focused)
-3. Add more specific requirements to prompt
-4. Check if using correct model (`gemini-1.5-pro`)
-
-### Issue: Job didn't run
-
-**Solution:**
-1. Check scheduler status: `curl http://localhost:8000/api/scheduler/jobs`
-2. Verify `ENABLE_SCHEDULER=true` in `.env`
-3. Check logs: `grep "STARTED" logs/app.log`
-4. Manually trigger: `curl -X POST http://localhost:8000/api/jobs/generate-topics`
-
-### Issue: Database connection error
-
-**Solution:**
-1. Verify database is running: `pg_isready` (PostgreSQL) or `mysqladmin ping` (MySQL)
-2. Check `DATABASE_URL` in `.env`
-3. Test connection: `python scripts/test_setup.py`
-4. Check credentials and permissions
-
-### Issue: Hashnode publishing fails
-
-**Solution:**
-1. Verify API token: `curl http://localhost:8000/api/health`
-2. Check publication ID is correct
-3. Test API: `python scripts/test_setup.py`
-4. Check Hashnode API status
-5. Review error logs: `grep "hashnode" logs/app.log -i`
-
-## 📈 Scaling & Performance
-
-### Database Optimization
-
-The system includes optimized indexes:
-- `topics(scheduled_date, status)` - Fast daily lookups
-- `topics(category_id)` - Category filtering
-- `generation_history(topic_hash)` - Duplicate detection
-- `blogs(status)` - Status filtering
-
-### API Rate Limits
-
-- **Gemini API**: Uses exponential backoff retry
-- **Hashnode API**: Respects rate limit headers
-- Both: Configured with max 3 retries
-
-### Scalability Options
-
-For high-volume scenarios:
-1. Switch to **Celery** for distributed job processing
-2. Use **Redis** for caching category data
-3. Implement **connection pooling** (already configured)
-4. Add **load balancer** for API endpoints
-
-## 🔐 Security Best Practices
-
-1. **Never commit `.env` file** (already in `.gitignore`)
-2. **Use strong database passwords**
-3. **Rotate API keys regularly**
-4. **Enable CORS only for trusted origins** (edit `main.py`)
-5. **Use HTTPS in production**
-6. **Implement rate limiting** on API endpoints
-7. **Regular database backups**
-
-## 📦 Deployment
-
-### Production Checklist
-
-- [ ] Set `ENVIRONMENT=production` in `.env`
-- [ ] Use production database with backups
-- [ ] Configure proper `DATABASE_URL` (use connection pooling)
-- [ ] Set `LOG_LEVEL=WARNING` or `ERROR`
-- [ ] Disable uvicorn `--reload` flag
-- [ ] Use process manager (systemd, supervisor, PM2)
-- [ ] Set up reverse proxy (Nginx, Apache)
-- [ ] Enable HTTPS
-- [ ] Configure proper CORS origins
-- [ ] Set up monitoring (Sentry, Datadog, etc.)
-- [ ] Schedule regular database backups
-- [ ] Set up log rotation
-
-### Systemd Service Example
-
-```ini
-[Unit]
-Description=Blog Automation System
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/var/www/blog_automation
-Environment="PATH=/var/www/blog_automation/venv/bin"
-ExecStart=/var/www/blog_automation/venv/bin/python main.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## 🤝 Contributing
-
-To extend or modify the system:
-
-1. **Add new category**: Use API or directly insert into database
-2. **Modify prompts**: Edit `app/services/gemini_service.py`
-3. **Adjust scheduling**: Edit `config/settings.py`
-4. **Add new job**: Create in `app/jobs/` and register in scheduler
-5. **Extend API**: Add routes in `app/api/routes.py`
-
-## 📝 License
-
-This project is provided as-is for educational and commercial use.
-
-## 🆘 Support
-
-For issues, questions, or suggestions:
-1. Check troubleshooting section above
-2. Review logs in `logs/app.log`
-3. Test setup with `python scripts/test_setup.py`
-4. Check API docs at `/docs`
+An intelligent, AI-powered blog automation system that generates unique, SEO-optimized blog posts and publishes them to Hashnode automatically. Built with Python, Google Gemini AI, and MongoDB.
 
 ---
 
-**Built with:** FastAPI • SQLAlchemy • Google Gemini AI • Hashnode API • APScheduler
+## Table of Contents
 
-**Version:** 1.0.0
+- [Overview](#overview)
+- [Features](#features)
+- [How It Works](#how-it-works)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Output Example](#output-example)
+- [Error Handling](#error-handling)
+- [Troubleshooting](#troubleshooting)
+- [API Information](#api-information)
+- [Contributing](#contributing)
+
+---
+
+## Overview
+
+This standalone Python script automates the entire blog creation and publishing workflow:
+
+1. Selects a content category intelligently
+2. Fetches trending tech news for context
+3. Generates unique, relevant topics using AI
+4. Validates topic uniqueness (70% similarity threshold)
+5. Creates comprehensive blog posts (1200-1500 words)
+6. Publishes directly to your Hashnode blog
+7. Tracks everything in MongoDB
+
+**No scheduler, no FastAPI, no complexity** - just run the script whenever you want to publish a new blog post!
+
+---
+
+## Features
+
+### AI-Powered Content Generation
+- **Google Gemini AI** integration for intelligent topic and content generation
+- Context-aware topics based on trending tech news
+- SEO-optimized blog posts with meta descriptions and tags
+
+### Intelligent Uniqueness Detection
+- **70% similarity threshold** using combined Jaccard + Sequence matching
+- Checks against **6 months** of historical topics
+- Prevents duplicate or highly similar content
+
+### Smart Category Management
+- **8 pre-configured categories**: Web Development, AI & Machine Learning, DevOps, Cybersecurity, Cloud Computing, Mobile Development, Data Science, Blockchain
+- Fair rotation to ensure balanced content
+- Easy to add custom categories
+
+### Robust Error Handling
+- **Exponential backoff retry logic** for API calls (2s, 4s, 8s delays)
+- Up to **5 attempts** to find unique topics
+- Graceful handling of API rate limits and overload
+
+### Rate Limit Protection
+- **10-30 second random delays** between each step
+- Prevents API throttling
+- Respects service rate limits
+
+### Comprehensive Logging
+- Detailed progress logs with timestamps
+- Emoji indicators for easy scanning
+- Full error stack traces for debugging
+
+---
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  1. SELECT CATEGORY (Random from active categories)     │
+│     ↓ Sleep 10-30s                                       │
+│  2. FETCH TRENDING NEWS (NewsData.io API)               │
+│     ↓ Sleep 10-30s                                       │
+│  3. GENERATE TOPIC (Google Gemini AI)                   │
+│     ↓ Sleep 10-30s                                       │
+│  4. CHECK UNIQUENESS (70% similarity threshold)         │
+│     ↓ Retry up to 5 times if duplicate                  │
+│     ↓ Sleep 10-30s                                       │
+│  5. STORE TOPIC (MongoDB)                               │
+│     ↓ Sleep 10-30s                                       │
+│  6. GENERATE BLOG (1200-1500 words, Gemini AI)         │
+│     ↓ Sleep 10-30s                                       │
+│  7. STORE BLOG (MongoDB)                                │
+│     ↓ Sleep 10-30s                                       │
+│  8. PUBLISH TO HASHNODE (GraphQL API)                   │
+│     ↓                                                     │
+│  9. UPDATE DATABASE (Post ID, URL, timestamps)          │
+│     ↓                                                     │
+│ 10. SUCCESS! (Show total time and publication URL)      │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Prerequisites
+
+### System Requirements
+- **Python 3.9+** (tested on Python 3.13)
+- **MongoDB** (local or cloud instance like MongoDB Atlas)
+- **Internet connection** (for API calls)
+
+### Required API Keys
+You'll need free accounts and API keys from:
+
+1. **Google Gemini AI** - [Get API Key](https://ai.google.dev/)
+   - Free tier available
+   - Used for topic and blog generation
+
+2. **Hashnode** - [Get API Token](https://hashnode.com/settings/developer)
+   - Free blogging platform
+   - GraphQL API for publishing
+
+3. **NewsData.io** - [Get API Key](https://newsdata.io/register)
+   - Free tier: 200 requests/day
+   - Used for trending tech news
+
+4. **AWS S3** (Optional) - [AWS Console](https://aws.amazon.com/)
+   - Only needed if you want cover images
+   - Can be disabled with `ENABLE_BLOG_IMAGES=false`
+
+---
+
+## Installation
+
+### 1. Clone or Download the Repository
+
+```bash
+cd /path/to/your/projects
+# If you have the code, navigate to the directory
+cd Blog-Automation
+```
+
+### 2. Create Virtual Environment
+
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+### 3. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Set Up MongoDB
+
+**Option A: Local MongoDB**
+```bash
+# Install MongoDB Community Edition
+# On Ubuntu/Debian:
+sudo apt-get install mongodb
+
+# Start MongoDB
+sudo systemctl start mongodb
+sudo systemctl enable mongodb
+```
+
+**Option B: MongoDB Atlas (Cloud)**
+1. Create free account at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
+2. Create a cluster
+3. Get connection string (looks like: `mongodb+srv://user:pass@cluster.mongodb.net/`)
+4. Use this in your `.env` file
+
+### 5. Initialize Categories
+
+```bash
+python3 init_categories.py
+```
+
+This creates 8 default categories in your database.
+
+---
+
+## Configuration
+
+### Environment Variables
+
+Create a `.env` file in the project root:
+
+```env
+# ===== REQUIRED: MongoDB Configuration =====
+MONGODB_URL=mongodb://localhost:27017
+# For MongoDB Atlas: mongodb+srv://username:password@cluster.mongodb.net/
+MONGODB_DB_NAME=blog_automation
+
+# ===== REQUIRED: API Keys =====
+# Google Gemini AI (https://ai.google.dev/)
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Hashnode (https://hashnode.com/settings/developer)
+HASHNODE_API_TOKEN=your_hashnode_token_here
+HASHNODE_PUBLICATION_ID=your_publication_id_here
+
+# NewsData.io (https://newsdata.io/)
+NEWSDATA_API_KEY=your_newsdata_api_key_here
+
+# ===== OPTIONAL: Application Settings =====
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+LOG_FILE=logs/app.log
+TIMEZONE=Asia/Kolkata
+
+# ===== OPTIONAL: AWS S3 (for cover images) =====
+# Set ENABLE_BLOG_IMAGES=false if you don't want images
+AWS_ACCESS_KEY_ID=your_aws_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret
+AWS_S3_BUCKET_NAME=your-bucket-name
+AWS_REGION=us-east-1
+```
+
+### Important Notes
+
+**Getting your Hashnode Publication ID:**
+1. Go to your Hashnode dashboard
+2. Open your publication settings
+3. The publication ID is in the URL or can be found via GraphQL query
+
+**Disabling Image Generation:**
+If you don't want to use AWS S3 for cover images, add:
+```env
+ENABLE_BLOG_IMAGES=false
+```
+
+---
+
+## Usage
+
+### Basic Usage
+
+```bash
+# Activate virtual environment
+source venv/bin/activate
+
+# Run the script
+python3 run_blog_automation.py
+```
+
+### Alternative Methods
+
+**Using the shell script:**
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+**Direct execution:**
+```bash
+chmod +x run_blog_automation.py
+./run_blog_automation.py
+```
+
+### What Happens When You Run
+
+1. Script initializes services (MongoDB, Gemini, NewsData, Hashnode)
+2. Selects a random active category
+3. Fetches latest tech news (10-20 articles)
+4. Generates a unique topic (retries up to 5 times if needed)
+5. Creates comprehensive blog post with:
+   - SEO-optimized title
+   - 1200-1500 word content
+   - Meta description (150-160 characters)
+   - 3-7 relevant tags
+6. Publishes to your Hashnode blog
+7. Shows success message with publication URL
+
+**Total Time:** Approximately 3-5 minutes (including sleep delays)
+
+---
+
+## Project Structure
+
+```
+Blog-Automation/
+│
+├── run_blog_automation.py      # ⭐ Main script - Run this!
+├── init_categories.py          # Initialize database categories
+├── run.sh                      # Quick run helper script
+├── requirements.txt            # Python dependencies
+├── .env                        # Environment variables (create this!)
+├── .gitignore                  # Git ignore rules
+│
+├── README.md                   # This file
+├── USAGE.md                    # Detailed usage examples
+├── SETUP_COMPLETE.md           # Setup verification guide
+├── FINAL_STATUS.md             # Current project status
+│
+├── config/                     # Configuration
+│   ├── settings.py            # Settings loader (reads .env)
+│   ├── logging_config.py      # Logging configuration
+│   └── __init__.py
+│
+├── app/                        # Application code
+│   ├── __init__.py
+│   │
+│   ├── models/                 # Database models
+│   │   ├── database.py        # MongoDB connection (sync & async)
+│   │   ├── models.py          # Document schemas
+│   │   └── __init__.py
+│   │
+│   ├── services/               # External API integrations
+│   │   ├── gemini_service.py       # Google Gemini AI
+│   │   ├── hashnode_service.py     # Hashnode GraphQL API
+│   │   ├── newsdata_service.py     # NewsData.io API
+│   │   ├── image_upload_service.py # AWS S3 uploads (optional)
+│   │   └── __init__.py
+│   │
+│   └── utils/                  # Utility functions
+│       ├── uniqueness.py      # Similarity detection
+│       └── __init__.py
+│
+├── logs/                       # Application logs
+│   └── app.log                # Structured JSON logs
+│
+├── temp_images/                # Temporary image storage
+│   └── .gitkeep
+│
+└── venv/                       # Python virtual environment
+```
+
+---
+
+## Output Example
+
+```
+============================================================
+🚀 BLOG AUTOMATION SCRIPT STARTED
+============================================================
+📁 Fetching a random category...
+✓ Selected category: Cybersecurity
+Category selected (sleeping for 18s)
+
+🔄 Starting unique topic search (max 5 attempts)...
+
+--- Attempt 1/5 ---
+🤖 Generating topic for category: Cybersecurity
+📰 Fetching trending tech news...
+Successfully fetched 10 tech articles from newsdata.io
+News fetched successfully (sleeping for 12s)
+
+🎯 Calling Gemini AI to generate topic...
+✓ Generated topic: Securing Your Digital Aura: Protecting Privacy with AI Smart Glasses in 2025
+
+Topic generated, checking uniqueness (sleeping for 23s)
+
+🔍 Checking uniqueness for: Securing Your Digital Aura...
+📊 Comparing against 2 topics and 2 history records
+✓ Topic is unique!
+🎉 Found unique topic on attempt 1!
+
+Unique topic found (sleeping for 21s)
+
+💾 Storing topic in database...
+✓ Topic stored with ID: 6942e3413f2c8d9f15f9474a
+Topic stored (sleeping for 18s)
+
+📝 Generating blog content for: Securing Your Digital Aura...
+✓ Blog generated successfully!
+   Title: Securing Your Digital Aura: AI Smart Glasses Privacy Guide
+   Word Count: 1456
+   Tags: cybersecurity, privacy, ai, wearables, smart-glasses
+
+Blog content generated (sleeping for 27s)
+
+💾 Storing blog in database...
+✓ Blog stored with ID: 6942e4b6744d06c397c57494
+Blog stored (sleeping for 26s)
+
+🚀 Publishing blog to Hashnode...
+✓ Blog published successfully!
+   Post ID: 6942e4b7744d06c397c57495
+   URL: https://yourblog.hashnode.dev/securing-your-digital-aura
+
+============================================================
+✅ BLOG AUTOMATION COMPLETED SUCCESSFULLY!
+⏱️  Total time: 245.67 seconds
+============================================================
+```
+
+---
+
+## Error Handling
+
+### What the Script Does
+
+1. **Topic Not Unique?**
+   - Tries up to 5 times to generate a different topic
+   - Each attempt checks against 6 months of history
+   - Exits with error if all attempts fail
+
+2. **API Rate Limited?**
+   - Implements exponential backoff (2s, 4s, 8s)
+   - Respects `Retry-After` headers
+   - Max 3 retry attempts per API call
+
+3. **Gemini API Overloaded (503)?**
+   - Automatically retries with delays
+   - Logs the issue clearly
+   - This is a temporary Google API issue
+
+4. **Network Issues?**
+   - Timeout after 60 seconds per request
+   - Clear error messages with stack traces
+   - Database operations remain consistent
+
+5. **Publishing Fails?**
+   - Checks for valid response structure
+   - Updates database only on success
+   - Stores draft if publishing fails
+
+### Exit Codes
+
+- `0` - Success
+- `1` - Error (no unique topic, generation failed, publishing failed)
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### 1. "No active categories found in database"
+
+**Solution:**
+```bash
+python3 init_categories.py
+```
+
+#### 2. "ModuleNotFoundError: No module named 'X'"
+
+**Solution:**
+```bash
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+#### 3. "Authentication error: Invalid API token"
+
+**Solution:**
+- Check your API keys in `.env`
+- Ensure no extra spaces or quotes
+- Verify keys are active on respective platforms
+
+#### 4. "MongoDB connection refused"
+
+**Solution:**
+- Check MongoDB is running: `sudo systemctl status mongodb`
+- Verify connection string in `.env`
+- For Atlas, check IP whitelist settings
+
+#### 5. "503 UNAVAILABLE - The model is overloaded"
+
+**Solution:**
+- This is a temporary Google Gemini API issue
+- The script retries automatically
+- Try running the script again later
+- Peak times may have higher load
+
+#### 6. "Failed to publish: Invalid response from Hashnode"
+
+**Solution:**
+- Verify `HASHNODE_PUBLICATION_ID` is correct
+- Check your Hashnode API token is valid
+- Ensure publication is not private/draft
+
+---
+
+## API Information
+
+### Google Gemini AI
+- **Model Used:** `gemini-2.5-flash`
+- **Temperature:** 0.7 (balanced creativity)
+- **Max Retries:** 3 with exponential backoff
+- **Timeout:** 60 seconds
+- **Rate Limits:** Handled automatically
+
+### Hashnode GraphQL API
+- **Endpoint:** `https://gql.hashnode.com/`
+- **Authentication:** Bearer token
+- **Operations:** `publishPost` mutation
+- **Rate Limits:** Automatic retry with backoff
+
+### NewsData.io API
+- **Free Tier:** 200 requests/day
+- **Articles per Request:** 10-20
+- **Category:** Technology
+- **Language:** English
+- **Lookback:** Last 2 days
+
+### MongoDB
+- **Collections:** 5 (categories, topics, blogs, generation_history, logs)
+- **Connection Pool:** 1-10 connections
+- **Timeout:** 30 seconds
+- **Indexes:** Optimized for frequent queries
+
+---
+
+## Database Schema
+
+### Collections
+
+**1. categories**
+```json
+{
+  "_id": ObjectId,
+  "name": "Web Development",
+  "description": "Modern web technologies...",
+  "is_active": true,
+  "usage_count": 5,
+  "last_used_date": ISODate,
+  "created_at": ISODate,
+  "updated_at": ISODate
+}
+```
+
+**2. topics**
+```json
+{
+  "_id": ObjectId,
+  "title": "Topic title",
+  "category_id": ObjectId,
+  "category_name": "Category",
+  "status": "PENDING|IN_PROGRESS|COMPLETED",
+  "scheduled_date": ISODate,
+  "hash": "sha256_hash",
+  "created_at": ISODate,
+  "updated_at": ISODate
+}
+```
+
+**3. blogs**
+```json
+{
+  "_id": ObjectId,
+  "topic_id": ObjectId,
+  "category_id": ObjectId,
+  "title": "Blog title",
+  "content": "Full markdown content",
+  "meta_description": "SEO description",
+  "tags": ["tag1", "tag2"],
+  "word_count": 1456,
+  "status": "DRAFT|PUBLISHED",
+  "hashnode_post_id": "post_id",
+  "hashnode_url": "https://...",
+  "published_at": ISODate,
+  "created_at": ISODate,
+  "updated_at": ISODate
+}
+```
+
+---
+
+## Advanced Configuration
+
+### Customizing Settings
+
+Edit `config/settings.py` to change:
+
+- **Similarity Threshold:** `SIMILARITY_THRESHOLD = 0.7` (70%)
+- **History Lookback:** `HISTORY_LOOKBACK_MONTHS = 6`
+- **Topic Attempts:** Modify in script: `max_topic_attempts = 5`
+- **Word Count:** `MIN_BLOG_WORD_COUNT = 1000`, `MAX_BLOG_WORD_COUNT = 2000`
+- **Tags Count:** `MIN_TAGS_COUNT = 3`, `MAX_TAGS_COUNT = 7`
+
+### Adding Custom Categories
+
+```python
+python3
+>>> from app.models.database import get_sync_db
+>>> db = get_sync_db()
+>>> db.categories.insert_one({
+...     "name": "IoT & Edge Computing",
+...     "description": "Internet of Things and edge computing topics",
+...     "is_active": True,
+...     "usage_count": 0,
+...     "last_used_date": None
+... })
+```
+
+---
+
+## Contributing
+
+This is a personal automation project, but improvements are welcome!
+
+### Areas for Improvement
+- [ ] Add image generation using Stable Diffusion or DALL-E
+- [ ] Support multiple blog platforms (Medium, Dev.to)
+- [ ] Add scheduling capability (cron integration)
+- [ ] Implement content calendar
+- [ ] Add A/B testing for titles
+- [ ] Multi-language support
+
+---
+
+## License
+
+This project is for personal use. Modify as needed for your own blog automation.
+
+---
+
+## Credits
+
+**Built with:**
+- [Google Gemini AI](https://ai.google.dev/) - Content generation
+- [Hashnode](https://hashnode.com/) - Blog hosting
+- [NewsData.io](https://newsdata.io/) - Trending news
+- [MongoDB](https://www.mongodb.com/) - Database
+- [Python](https://www.python.org/) - Core language
+
+---
+
+## Support
+
+For issues or questions:
+1. Check [TROUBLESHOOTING](#troubleshooting) section
+2. Review [SETUP_COMPLETE.md](SETUP_COMPLETE.md) for setup verification
+3. Check logs in `logs/app.log`
+
+---
+
+**Happy Blogging! 🚀**
