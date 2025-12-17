@@ -48,3 +48,5 @@ dist/
 *.egg-info/
 doc/
 logs/
+.dockerignore
+.claude
