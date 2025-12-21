@@ -92,26 +92,34 @@ GEMINI_MAX_TOKENS_BLOG = 8000
 API_TIMEOUT = 60
 API_MAX_RETRIES = 3
 
-# Image Generation Settings
-ENABLE_BLOG_IMAGES = os.getenv("ENABLE_BLOG_IMAGES", "true").lower() == "true"
-IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen-3.0-generate-001")  # Imagen 3.0 for image generation
-IMAGE_ASPECT_RATIO = os.getenv("IMAGE_ASPECT_RATIO", "16:9")
-IMAGE_TEMP_DIR = BASE_DIR / "temp_images"
-
 # AWS S3 Upload Service
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
-# Validate AWS credentials if image generation is enabled
-if ENABLE_BLOG_IMAGES:
-    if not AWS_S3_BUCKET_NAME:
-        raise ValueError("AWS_S3_BUCKET_NAME must be set when ENABLE_BLOG_IMAGES is true")
-    if not AWS_ACCESS_KEY_ID:
-        raise ValueError("AWS_ACCESS_KEY_ID must be set when ENABLE_BLOG_IMAGES is true")
-    if not AWS_SECRET_ACCESS_KEY:
-        raise ValueError("AWS_SECRET_ACCESS_KEY must be set when ENABLE_BLOG_IMAGES is true")
+# Image Generation Settings
+# Only enable if AWS credentials are available
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen-3.0-generate-001")  # Imagen 3.0 for image generation
+IMAGE_ASPECT_RATIO = os.getenv("IMAGE_ASPECT_RATIO", "16:9")
+IMAGE_TEMP_DIR = BASE_DIR / "temp_images"
+
+# Check if AWS credentials are available
+_aws_credentials_available = bool(AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and AWS_S3_BUCKET_NAME)
+
+# Enable blog images only if explicitly set to true AND AWS credentials are available
+_user_wants_images = os.getenv("ENABLE_BLOG_IMAGES", "false").lower() == "true"
+ENABLE_BLOG_IMAGES = _user_wants_images and _aws_credentials_available
+
+# Warn if user wants images but credentials are missing
+if _user_wants_images and not _aws_credentials_available:
+    import warnings
+    warnings.warn(
+        "ENABLE_BLOG_IMAGES is set to true, but AWS credentials are missing. "
+        "Image generation will be disabled. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, "
+        "and AWS_S3_BUCKET_NAME to enable image generation.",
+        UserWarning
+    )
 
 # MongoDB Connection Settings
 MONGODB_MAX_POOL_SIZE = 10
