@@ -62,12 +62,12 @@ class ImageUploadService:
             filename = os.path.basename(image_path)
             object_name = f"blog-covers/{filename}"
 
-            # Upload file to S3 with public-read ACL
+            # Upload file to S3 (public access controlled by bucket policy)
             self.s3_client.upload_file(
                 image_path,
                 self.bucket_name,
                 object_name,
-                ExtraArgs={'ACL': 'public-read', 'ContentType': 'image/png'}
+                ExtraArgs={'ContentType': 'image/png'}
             )
 
             # Construct public URL
@@ -110,7 +110,7 @@ class ImageUploadService:
 
     def upload_and_cleanup(self, image_path: str, title: Optional[str] = None, cleanup_on_failure: bool = True) -> Optional[str]:
         """
-        Upload image to AWS S3 and optionally cleanup on failure
+        Upload image to AWS S3 and cleanup local temp file
 
         Args:
             image_path: Local path to image file
@@ -123,9 +123,14 @@ class ImageUploadService:
         # Upload
         image_url = self.upload_to_s3(image_path, title=title)
 
-        # Cleanup on failure if requested
-        if not image_url and cleanup_on_failure:
-            logger.info("Upload failed, cleaning up local image")
+        # Cleanup temp file after upload (success or failure)
+        if image_url:
+            # Upload succeeded - clean up temp file
+            logger.info("Upload successful, cleaning up temp image")
+            self.cleanup_local_image(image_path)
+        elif cleanup_on_failure:
+            # Upload failed - clean up if requested
+            logger.info("Upload failed, cleaning up temp image")
             self.cleanup_local_image(image_path)
 
         return image_url

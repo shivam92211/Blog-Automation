@@ -2,6 +2,7 @@
 Hashnode API integration service
 Handles blog publishing to Hashnode
 """
+import re
 import time
 import requests
 from typing import Dict, Optional
@@ -216,6 +217,8 @@ class HashnodeService:
         Format tags for GraphQL mutation
         Hashnode accepts tag objects with slug and name
 
+        Tag slugs must match ^[a-z0-9-]{1,250}$ (only lowercase letters, numbers, and hyphens)
+
         Args:
             tags: List of tag strings
 
@@ -225,10 +228,22 @@ class HashnodeService:
         if not tags:
             return "[]"
 
-        # Convert tags to slug format (lowercase, replace spaces with hyphens)
+        # Convert tags to slug format (lowercase, replace spaces and invalid chars with hyphens)
         formatted_tags = []
         for tag in tags:
-            slug = tag.lower().replace(" ", "-")
+            # Convert to lowercase
+            slug = tag.lower()
+            # Replace spaces with hyphens
+            slug = slug.replace(" ", "-")
+            # Replace any invalid characters (not a-z, 0-9, or -) with hyphens
+            slug = re.sub(r'[^a-z0-9-]', '-', slug)
+            # Remove consecutive hyphens
+            slug = re.sub(r'-+', '-', slug)
+            # Remove leading/trailing hyphens
+            slug = slug.strip('-')
+            # Limit to 250 characters
+            slug = slug[:250]
+
             name = tag.title()
             formatted_tags.append(f'{{slug: "{slug}", name: "{name}"}}')
 

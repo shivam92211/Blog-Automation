@@ -20,6 +20,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY must be set in environment variables")
 
+GEMINI_TIER_ONE_API_KEY = os.getenv("GEMINI_TIER_ONE_API_KEY")  # Optional, falls back to standard key if needed
+
 # Hashnode
 HASHNODE_API_TOKEN = os.getenv("HASHNODE_API_TOKEN")
 HASHNODE_PUBLICATION_ID = os.getenv("HASHNODE_PUBLICATION_ID")
@@ -168,6 +170,7 @@ class Settings:
 
     # API Keys
     GEMINI_API_KEY = GEMINI_API_KEY
+    GEMINI_TIER_ONE_API_KEY = GEMINI_TIER_ONE_API_KEY
     HASHNODE_API_TOKEN = HASHNODE_API_TOKEN
     HASHNODE_PUBLICATION_ID = HASHNODE_PUBLICATION_ID
     HASHNODE_API_URL = HASHNODE_API_URL

@@ -497,7 +497,7 @@ IMPORTANT: Return ONLY the JSON object, no additional text or markdown formattin
         save_path: Optional[str] = None
     ) -> Optional[str]:
         """
-        Generate blog cover image using Gemini image generation
+        Generate blog cover image using Gemini image generation (v1/Tier One)
 
         Args:
             blog_title: The blog post title
@@ -512,81 +512,65 @@ IMPORTANT: Return ONLY the JSON object, no additional text or markdown formattin
             logger.info("Blog image generation is disabled")
             return None
 
+        # Use Tier One key if available, else fallback (though user said specific key)
+        api_key = settings.GEMINI_TIER_ONE_API_KEY or settings.GEMINI_API_KEY
+
+        if not api_key:
+             logger.error("No API key available for image generation")
+             return None
+
         logger.info(f"Generating cover image for blog: {blog_title[:50]}...")
 
         try:
-            # Import required modules for image generation
+            # Import here to avoid dependency issues if not installed
+            from google import genai
+            from google.genai import types
             from PIL import Image
             import io
             import os
-            from datetime import datetime
 
-            # Build image generation prompt
-            prompt = self._build_image_generation_prompt(blog_title, blog_description, keywords)
+            client = genai.Client(api_key=api_key)
 
-            # Note: Image generation requires google-generativeai >= 1.0.0
-            # Current version (0.8.5) does not support imagen API
-            logger.warning("Image generation is not supported in google-generativeai 0.8.5")
-            logger.info("To enable image generation, upgrade to google-generativeai >= 1.0.0")
+            prompt_text = self._build_image_generation_prompt(blog_title, blog_description, keywords)
+
+            logger.info(f"Calling Gemini Image API with prompt length: {len(prompt_text)}")
+
+            response = client.models.generate_content(
+                model="gemini-2.5-flash-image", # User specified this model
+                contents=prompt_text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio="16:9"
+                    )
+                )
+            )
+
+            for part in response.candidates[0].content.parts:
+                if part.inline_data:
+                    image_data = part.inline_data.data
+                    image = Image.open(io.BytesIO(image_data))
+
+                    if not save_path:
+                        # Create temp path
+                        timestamp = int(time.time())
+                        safe_title = "".join([c for c in blog_title if c.isalnum() or c in (' ', '-')]).strip().replace(" ", "_")[:30]
+                        filename = f"blog_image_{timestamp}_{safe_title}.png"
+                        save_path = os.path.join(settings.IMAGE_TEMP_DIR, filename)
+
+                    # Ensure directory exists
+                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+                    image.save(save_path)
+                    logger.info(f"Success! Image saved to: {save_path}")
+                    return save_path
+
+            logger.warning("No image data found in the response")
             return None
-
-            # TODO: Uncomment when upgrading to google-generativeai >= 1.0.0
-            # # Generate image using Imagen
-            # def generate_image():
-            #     response = self.client.models.generate_image(
-            #         model='imagen-3.0-generate-001',
-            #         prompt=prompt,
-            #         config=types.GenerateImageConfig(
-            #             number_of_images=1,
-            #             aspect_ratio='16:9',
-            #             safety_filter_level='BLOCK_MEDIUM_AND_ABOVE',
-            #             person_generation='ALLOW_ADULT'
-            #         )
-            #     )
-            #     return response
-            #
-            # # Call with retry
-            # response = self._call_with_retry(generate_image)
-            #
-            # # Extract image from response
-            # if not response or not hasattr(response, 'generated_images') or not response.generated_images:
-            #     logger.error("No images generated in response")
-            #     return None
-            #
-            # # Get the first generated image
-            # generated_image = response.generated_images[0]
-            #
-            # # Get image data (bytes)
-            # if hasattr(generated_image, 'image') and hasattr(generated_image.image, 'image_bytes'):
-            #     image_data = generated_image.image.image_bytes
-            # elif hasattr(generated_image, 'image_bytes'):
-            #     image_data = generated_image.image_bytes
-            # else:
-            #     logger.error("Could not extract image bytes from response")
-            #     return None
-            #
-            # # Convert bytes to PIL Image
-            # image = Image.open(io.BytesIO(image_data))
-            #
-            # # Generate save path if not provided
-            # if not save_path:
-            #     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            #     filename = f"blog_cover_{timestamp}.png"
-            #     save_path = str(settings.IMAGE_TEMP_DIR / filename)
-            #
-            # # Ensure temp directory exists
-            # os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            #
-            # # Save image
-            # image.save(save_path, format='PNG')
-            # file_size = os.path.getsize(save_path) / 1024  # KB
-            #
-            # logger.info(f"✓ Cover image generated and saved: {save_path} ({file_size:.1f} KB)")
-            # return save_path
 
         except Exception as e:
-            logger.error(f"Failed to generate cover image: {e}", exc_info=True)
-            return None
+            logger.error(f"Error occurred during image generation: {e}")
+            raise e
 
     def _build_image_generation_prompt(
         self,

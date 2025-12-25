@@ -13,6 +13,7 @@ pytz==2024.1
 
 # AI/ML
 google-generativeai==0.8.5
+google-genai  # New SDK for image generation
 
 # Image Processing & Upload
 Pillow==11.0.0
