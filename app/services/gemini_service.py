@@ -385,6 +385,8 @@ Requirements:
 
 6. FORMATTING:
    - Use Markdown format
+   - DO NOT include the title as an H1 (#) heading in the content
+   - Start directly with the introduction paragraph
    - Use ## for main headings, ### for subheadings
    - Include code snippets with language tags if relevant
    - Use **bold** for emphasis
@@ -393,8 +395,9 @@ Requirements:
 Output Format (JSON):
 {{
   "title": "Final optimized blog title (may refine the original)",
+  "seo_title": "SEO-optimized title for search engines (50-60 characters, include main keyword)",
   "content": "Full blog content in Markdown format",
-  "meta_description": "SEO meta description (150-160 characters)",
+  "meta_description": "SEO meta description (155-160 characters, compelling and keyword-rich)",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
   "estimated_read_time": "X min read"
 }}
@@ -541,7 +544,7 @@ IMPORTANT: Return ONLY the JSON object, no additional text or markdown formattin
                 config=types.GenerateContentConfig(
                     response_modalities=["IMAGE"],
                     image_config=types.ImageConfig(
-                        aspect_ratio="16:9"
+                        aspect_ratio="16:9"  # Gemini only supports aspect ratios, not exact dimensions
                     )
                 )
             )
@@ -550,6 +553,18 @@ IMPORTANT: Return ONLY the JSON object, no additional text or markdown formattin
                 if part.inline_data:
                     image_data = part.inline_data.data
                     image = Image.open(io.BytesIO(image_data))
+
+                    # Resize to exact OG image dimensions (1200x630)
+                    # Hashnode recommends 1200x630 for optimal social media sharing
+                    target_width = 1200
+                    target_height = 630
+
+                    logger.info(f"Original image size: {image.size}")
+
+                    # Resize with high-quality resampling
+                    image_resized = image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+                    logger.info(f"Resized to OG image dimensions: {target_width}x{target_height}")
 
                     if not save_path:
                         # Create temp path
@@ -561,7 +576,7 @@ IMPORTANT: Return ONLY the JSON object, no additional text or markdown formattin
                     # Ensure directory exists
                     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-                    image.save(save_path)
+                    image_resized.save(save_path, 'PNG', optimize=True, quality=95)
                     logger.info(f"Success! Image saved to: {save_path}")
                     return save_path
 
@@ -594,8 +609,9 @@ Requirements:
 - Suitable for a technology blog post
 - Abstract or conceptual representation (no text or specific people)
 - Vibrant but professional color scheme
-- High quality, suitable for web publishing
-- 16:9 aspect ratio (landscape orientation)
+- High quality, suitable for web publishing and social media sharing
+- 16:9 aspect ratio (will be resized to 1200x630 for OG image)
+- Design should work well when cropped or resized
 
 Style: Modern, professional, tech-forward, visually appealing"""
 
