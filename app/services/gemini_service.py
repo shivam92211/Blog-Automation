@@ -220,6 +220,7 @@ class GeminiService:
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
+                "seo_title": {"type": "string"},
                 "content": {"type": "string"},
                 "meta_description": {"type": "string"},
                 "tags": {
@@ -228,7 +229,7 @@ class GeminiService:
                 },
                 "estimated_read_time": {"type": "string"}
             },
-            "required": ["title", "content", "meta_description", "tags", "estimated_read_time"]
+            "required": ["title", "seo_title", "content", "meta_description", "tags", "estimated_read_time"]
         }
 
         # Call Gemini API with retry logic
@@ -251,17 +252,38 @@ class GeminiService:
 
         response_text = self._call_with_retry(call_api)
 
-        # Parse JSON response
+        # Parse and validate JSON response
         try:
             json_text = self._extract_json(response_text)
             blog_data = json.loads(json_text)
 
-            logger.info(f"Successfully generated blog content: {len(blog_data.get('content', ''))} characters")
+            # Validate all required fields are present and non-empty
+            validation_errors = self._validate_blog_data(blog_data)
+            if validation_errors:
+                logger.error(f"Blog data validation failed: {', '.join(validation_errors)}")
+                logger.error(f"Incomplete blog data: {blog_data}")
+                raise ValueError(f"Incomplete blog data from Gemini: {', '.join(validation_errors)}")
+
+            # Add word count
+            content = blog_data.get('content', '')
+            word_count = len(content.split())
+            blog_data['word_count'] = word_count
+
+            logger.info(f"Successfully generated blog content: {word_count} words, {len(content)} characters")
+            logger.info(f"✓ SEO Title: {blog_data.get('seo_title', 'N/A')[:60]}...")
+            logger.info(f"✓ Meta Description: {blog_data.get('meta_description', 'N/A')[:60]}...")
             return blog_data
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}")
-            logger.error(f"Response text: {response_text[:500]}...")
+            logger.error(f"Response text (first 500 chars): {response_text[:500]}...")
+            logger.error(f"Response text (last 200 chars): ...{response_text[-200:]}")
+
+            # Check if response was truncated
+            if not response_text.strip().endswith('}'):
+                logger.error("Response appears to be truncated (doesn't end with '}')")
+                raise ValueError(f"Truncated JSON response from Gemini - increase max_output_tokens or reduce prompt length")
+
             raise ValueError(f"Invalid JSON response from Gemini: {e}")
 
     def _build_topic_generation_prompt(
@@ -616,6 +638,66 @@ Requirements:
 Style: Modern, professional, tech-forward, visually appealing"""
 
         return prompt
+
+    def _validate_blog_data(self, blog_data: Dict) -> List[str]:
+        """
+        Validate blog data to ensure all required fields are present and valid
+
+        Args:
+            blog_data: The generated blog data dictionary
+
+        Returns:
+            List of validation error messages (empty if valid)
+        """
+        errors = []
+
+        # Check required fields exist
+        required_fields = ["title", "seo_title", "content", "meta_description", "tags"]
+        for field in required_fields:
+            if field not in blog_data:
+                errors.append(f"Missing required field: {field}")
+            elif not blog_data[field]:
+                errors.append(f"Empty required field: {field}")
+
+        # Validate specific field requirements
+        if "title" in blog_data and blog_data["title"]:
+            if len(blog_data["title"]) < 10:
+                errors.append(f"Title too short: {len(blog_data['title'])} chars (min 10)")
+            elif len(blog_data["title"]) > 200:
+                errors.append(f"Title too long: {len(blog_data['title'])} chars (max 200)")
+
+        if "seo_title" in blog_data and blog_data["seo_title"]:
+            seo_len = len(blog_data["seo_title"])
+            if seo_len < 40:
+                errors.append(f"SEO title too short: {seo_len} chars (recommended 50-60)")
+            elif seo_len > 70:
+                errors.append(f"SEO title too long: {seo_len} chars (recommended 50-60, max 70)")
+
+        if "content" in blog_data and blog_data["content"]:
+            content_len = len(blog_data["content"])
+            if content_len < 500:
+                errors.append(f"Content too short: {content_len} chars (min 500)")
+            # Check if content seems truncated (doesn't end with proper punctuation or newline)
+            content_end = blog_data["content"].strip()[-50:]
+            if not any(content_end.endswith(p) for p in ['.', '!', '?', '```', '\n']):
+                errors.append("Content appears to be truncated (no proper ending)")
+
+        if "meta_description" in blog_data and blog_data["meta_description"]:
+            meta_len = len(blog_data["meta_description"])
+            if meta_len < 120:
+                errors.append(f"Meta description too short: {meta_len} chars (recommended 155-160)")
+            elif meta_len > 170:
+                errors.append(f"Meta description too long: {meta_len} chars (max 170)")
+
+        if "tags" in blog_data:
+            if not isinstance(blog_data["tags"], list):
+                errors.append("Tags must be a list")
+            elif len(blog_data["tags"]) < 1:
+                errors.append("Must have at least 1 tag")
+            elif len(blog_data["tags"]) > 10:
+                errors.append(f"Too many tags: {len(blog_data['tags'])} (max 10)")
+
+        return errors
 
 
 # Singleton instance

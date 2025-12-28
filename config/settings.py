@@ -90,7 +90,7 @@ HISTORY_LOOKBACK_MONTHS = 6  # Check for duplicates in last 6 months
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_TEMPERATURE = 0.7
 GEMINI_MAX_TOKENS_TOPICS = 4000
-GEMINI_MAX_TOKENS_BLOG = 8000
+GEMINI_MAX_TOKENS_BLOG = 12000  # Increased to prevent truncation of blog content
 API_TIMEOUT = 60
 API_MAX_RETRIES = 3
 

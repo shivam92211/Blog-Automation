@@ -112,6 +112,11 @@ class HashnodeService:
         """
         logger.info(f"Publishing post to Hashnode: {title}")
 
+        # Fallback: Use regular title as SEO title if not provided
+        if not seo_title or seo_title.strip() == "":
+            seo_title = title
+            logger.info(f"SEO title not provided, using regular title: {title}")
+
         # Clean content to remove duplicate title
         content = self._remove_duplicate_title(content, title)
 
@@ -158,7 +163,22 @@ class HashnodeService:
             }
             logger.info(f"Successfully published post: {result['url']}")
 
-            # Log cover image status
+            # Log SEO metadata status
+            if post_data.get("seo"):
+                seo_data = post_data["seo"]
+                if seo_data.get("title"):
+                    logger.info(f"✓ SEO title set: {seo_data['title']}")
+                if seo_data.get("description"):
+                    logger.info(f"✓ SEO description set: {seo_data['description'][:60]}...")
+
+            # Log OG image status (for social media)
+            if post_data.get("ogMetaData") and post_data["ogMetaData"].get("image"):
+                logger.info(f"✓ OG image set successfully: {post_data['ogMetaData']['image']}")
+            elif cover_image_url:
+                logger.warning(f"⚠ OG image was provided but not set in Hashnode response")
+                logger.warning(f"  Check if metaTags.image field was included")
+
+            # Log cover image status (for post header)
             if post_data.get("coverImage") and post_data["coverImage"].get("url"):
                 logger.info(f"✓ Cover image set successfully: {post_data['coverImage']['url']}")
             elif cover_image_url:
@@ -195,17 +215,22 @@ class HashnodeService:
         # Format tags as array of tag input objects
         tags_formatted = self._format_tags(tags)
 
-        # Build meta tags section
+        # Build meta tags section (for SEO and OG tags)
         meta_tags = ""
-        if meta_description or seo_title:
+        if meta_description or seo_title or cover_image_url:
             meta_fields = []
             if seo_title:
                 meta_fields.append(f'title: "{seo_title_escaped}"')
             if meta_description:
                 meta_fields.append(f'description: "{meta_escaped}"')
+            # IMPORTANT: OG image must be in metaTags.image for social media preview
+            if cover_image_url:
+                cover_image_escaped = self._escape_graphql_string(cover_image_url)
+                meta_fields.append(f'image: "{cover_image_escaped}"')
+                logger.info(f"Including OG image in metaTags: {cover_image_url}")
             meta_tags = f'metaTags: {{ {", ".join(meta_fields)} }}'
 
-        # Build cover image section
+        # Build cover image section (for post header)
         cover_image = ""
         if cover_image_url:
             # Escape the URL for GraphQL
@@ -229,6 +254,13 @@ class HashnodeService:
               url
               coverImage {{
                 url
+              }}
+              seo {{
+                title
+                description
+              }}
+              ogMetaData {{
+                image
               }}
             }}
           }}
