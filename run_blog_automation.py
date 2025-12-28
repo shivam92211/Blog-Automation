@@ -296,6 +296,7 @@ class BlogAutomationRunner:
 
         logger.info(f"✓ Blog generated successfully!")
         logger.info(f"   Title: {blog_data.get('title')}")
+        logger.info(f"   SEO Title: {blog_data.get('seo_title', 'N/A')}")
         logger.info(f"   Word Count: {blog_data.get('word_count')}")
         logger.info(f"   Tags: {', '.join(blog_data.get('tags', []))}")
 
@@ -310,6 +311,7 @@ class BlogAutomationRunner:
             "category_id": category['_id'],
             "category_name": category['name'],
             "title": blog_data['title'],
+            "seo_title": blog_data.get('seo_title', ''),
             "content": blog_data['content'],
             "meta_description": blog_data.get('meta_description', ''),
             "tags": blog_data.get('tags', []),
@@ -337,7 +339,8 @@ class BlogAutomationRunner:
                 content=blog_data['content'],
                 tags=blog_data.get('tags', []),
                 cover_image_url=cover_image_url,
-                meta_description=blog_data.get('meta_description', '')
+                meta_description=blog_data.get('meta_description', ''),
+                seo_title=blog_data.get('seo_title')
             )
 
             # The result dict has: post_id, url, slug

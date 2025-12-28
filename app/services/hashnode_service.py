@@ -90,7 +90,8 @@ class HashnodeService:
         content: str,
         tags: list,
         meta_description: Optional[str] = None,
-        cover_image_url: Optional[str] = None
+        cover_image_url: Optional[str] = None,
+        seo_title: Optional[str] = None
     ) -> Dict:
         """
         Publish a blog post to Hashnode
@@ -101,6 +102,7 @@ class HashnodeService:
             tags: List of tag slugs (e.g., ["blockchain", "web3"])
             meta_description: Optional SEO meta description
             cover_image_url: Optional URL to cover image (must be publicly accessible)
+            seo_title: Optional SEO title (50-60 characters)
 
         Returns:
             Dictionary with keys: post_id, url, slug
@@ -110,9 +112,17 @@ class HashnodeService:
         """
         logger.info(f"Publishing post to Hashnode: {title}")
 
+        # Fallback: Use regular title as SEO title if not provided
+        if not seo_title or seo_title.strip() == "":
+            seo_title = title
+            logger.info(f"SEO title not provided, using regular title: {title}")
+
+        # Clean content to remove duplicate title
+        content = self._remove_duplicate_title(content, title)
+
         # Build GraphQL mutation
         mutation = self._build_publish_mutation(
-            title, content, tags, meta_description, cover_image_url
+            title, content, tags, meta_description, cover_image_url, seo_title
         )
 
         # Call Hashnode API with retry logic
@@ -152,6 +162,29 @@ class HashnodeService:
                 "slug": post_data["slug"]
             }
             logger.info(f"Successfully published post: {result['url']}")
+
+            # Log SEO metadata status
+            if post_data.get("seo"):
+                seo_data = post_data["seo"]
+                if seo_data.get("title"):
+                    logger.info(f"✓ SEO title set: {seo_data['title']}")
+                if seo_data.get("description"):
+                    logger.info(f"✓ SEO description set: {seo_data['description'][:60]}...")
+
+            # Log OG image status (for social media)
+            if post_data.get("ogMetaData") and post_data["ogMetaData"].get("image"):
+                logger.info(f"✓ OG image set successfully: {post_data['ogMetaData']['image']}")
+            elif cover_image_url:
+                logger.warning(f"⚠ OG image was provided but not set in Hashnode response")
+                logger.warning(f"  Check if metaTags.image field was included")
+
+            # Log cover image status (for post header)
+            if post_data.get("coverImage") and post_data["coverImage"].get("url"):
+                logger.info(f"✓ Cover image set successfully: {post_data['coverImage']['url']}")
+            elif cover_image_url:
+                logger.warning(f"⚠ Cover image was provided but not set in Hashnode response")
+                logger.warning(f"  Provided URL: {cover_image_url}")
+
             return result
 
         except (KeyError, TypeError) as e:
@@ -165,7 +198,8 @@ class HashnodeService:
         content: str,
         tags: list,
         meta_description: Optional[str],
-        cover_image_url: Optional[str] = None
+        cover_image_url: Optional[str] = None,
+        seo_title: Optional[str] = None
     ) -> str:
         """
         Build GraphQL mutation for publishing a post
@@ -176,19 +210,32 @@ class HashnodeService:
         title_escaped = self._escape_graphql_string(title)
         content_escaped = self._escape_graphql_string(content)
         meta_escaped = self._escape_graphql_string(meta_description) if meta_description else ""
+        seo_title_escaped = self._escape_graphql_string(seo_title) if seo_title else ""
 
         # Format tags as array of tag input objects
         tags_formatted = self._format_tags(tags)
 
-        # Build meta tags section
+        # Build meta tags section (for SEO and OG tags)
         meta_tags = ""
-        if meta_description:
-            meta_tags = f'metaTags: {{ description: "{meta_escaped}" }}'
+        if meta_description or seo_title or cover_image_url:
+            meta_fields = []
+            if seo_title:
+                meta_fields.append(f'title: "{seo_title_escaped}"')
+            if meta_description:
+                meta_fields.append(f'description: "{meta_escaped}"')
+            # IMPORTANT: OG image must be in metaTags.image for social media preview
+            if cover_image_url:
+                cover_image_escaped = self._escape_graphql_string(cover_image_url)
+                meta_fields.append(f'image: "{cover_image_escaped}"')
+                logger.info(f"Including OG image in metaTags: {cover_image_url}")
+            meta_tags = f'metaTags: {{ {", ".join(meta_fields)} }}'
 
-        # Build cover image section
+        # Build cover image section (for post header)
         cover_image = ""
         if cover_image_url:
-            cover_image = f'coverImageOptions: {{ coverImageURL: "{cover_image_url}" }}'
+            # Escape the URL for GraphQL
+            cover_image_escaped = self._escape_graphql_string(cover_image_url)
+            cover_image = f'coverImageOptions: {{ coverImageURL: "{cover_image_escaped}" }}'
             logger.info(f"Including cover image in post: {cover_image_url}")
 
         mutation = f"""
@@ -205,6 +252,16 @@ class HashnodeService:
               id
               slug
               url
+              coverImage {{
+                url
+              }}
+              seo {{
+                title
+                description
+              }}
+              ogMetaData {{
+                image
+              }}
             }}
           }}
         }}
@@ -248,6 +305,50 @@ class HashnodeService:
             formatted_tags.append(f'{{slug: "{slug}", name: "{name}"}}')
 
         return "[" + ", ".join(formatted_tags) + "]"
+
+    def _remove_duplicate_title(self, content: str, title: str) -> str:
+        """
+        Remove duplicate title from content if it appears as an H1 heading at the start
+
+        Args:
+            content: Markdown content
+            title: The blog post title
+
+        Returns:
+            Cleaned content without duplicate title
+        """
+        if not content:
+            return content
+
+        lines = content.split('\n')
+
+        # Check if first non-empty line is an H1 heading
+        first_line_idx = 0
+        for idx, line in enumerate(lines):
+            if line.strip():
+                first_line_idx = idx
+                break
+
+        first_line = lines[first_line_idx].strip()
+
+        # Check if it's an H1 heading (starts with #)
+        if first_line.startswith('# '):
+            # Extract the heading text
+            heading_text = first_line[2:].strip()
+
+            # If it matches the title (case-insensitive), remove it
+            if heading_text.lower() == title.lower():
+                logger.info(f"Removing duplicate title H1 heading from content: {heading_text}")
+                # Remove the H1 line and any immediately following empty lines
+                result_lines = lines[first_line_idx + 1:]
+
+                # Skip any leading empty lines after removing the title
+                while result_lines and not result_lines[0].strip():
+                    result_lines.pop(0)
+
+                return '\n'.join(result_lines)
+
+        return content
 
     def _escape_graphql_string(self, text: str) -> str:
         """
