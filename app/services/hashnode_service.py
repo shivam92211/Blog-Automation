@@ -15,12 +15,24 @@ logger = get_logger(__name__)
 class HashnodeService:
     """Service for interacting with Hashnode GraphQL API"""
 
-    def __init__(self):
+    def __init__(self, api_token: str = None, publication_id: str = None, publication_name: str = "Default"):
+        """
+        Initialize Hashnode service for a specific publication
+
+        Args:
+            api_token: Hashnode API token for this publication (optional, falls back to settings)
+            publication_id: Hashnode publication ID (optional, falls back to settings)
+            publication_name: Name for logging purposes
+        """
         self.api_url = settings.HASHNODE_API_URL
-        self.api_token = settings.HASHNODE_API_TOKEN
-        self.publication_id = settings.HASHNODE_PUBLICATION_ID
+        self.api_token = api_token or settings.HASHNODE_API_TOKEN
+        self.publication_id = publication_id or settings.HASHNODE_PUBLICATION_ID
+        self.publication_name = publication_name
         self.timeout = settings.API_TIMEOUT
         self.max_retries = settings.API_MAX_RETRIES
+
+        if not self.api_token or not self.publication_id:
+            raise ValueError(f"Hashnode API token and publication ID are required for {publication_name}")
 
     def _call_with_retry(self, func, *args, **kwargs):
         """
@@ -110,7 +122,7 @@ class HashnodeService:
         Raises:
             Exception: If publishing fails
         """
-        logger.info(f"Publishing post to Hashnode: {title}")
+        logger.info(f"Publishing post to Hashnode ({self.publication_name}): {title}")
 
         # Fallback: Use regular title as SEO title if not provided
         if not seo_title or seo_title.strip() == "":
@@ -418,5 +430,10 @@ class HashnodeService:
         return data["data"]["publication"]
 
 
-# Singleton instance
-hashnode_service = HashnodeService()
+# Legacy singleton instance (for backward compatibility)
+# Note: In multi-publication mode, create instances per publication instead
+try:
+    hashnode_service = HashnodeService()
+except ValueError:
+    # If credentials are not set (multi-publication mode), skip singleton creation
+    hashnode_service = None

@@ -51,14 +51,22 @@ logger = logging.getLogger(__name__)
 
 
 class BlogAutomationRunner:
-    """Standalone blog automation runner"""
+    """Multi-publication blog automation runner"""
 
     def __init__(self):
         self.db = get_sync_db()
         self.gemini = GeminiService()
         self.news_service = NewsDataService()
-        self.hashnode = HashnodeService()
         self.image_service = ImageUploadService()
+        self.publications = settings.HASHNODE_PUBLICATIONS
+
+        # Validate publications
+        if not self.publications:
+            raise ValueError("No Hashnode publications configured")
+
+        logger.info(f"Initialized with {len(self.publications)} publications")
+        for pub in self.publications:
+            logger.info(f"  - {pub.name}: {len(pub.categories)} categories")
 
         # Configuration
         self.max_topic_attempts = 5
@@ -75,7 +83,7 @@ class BlogAutomationRunner:
         time.sleep(duration)
 
     def get_random_category(self) -> Dict[str, Any]:
-        """Get a random category from database"""
+        """Get a random category from database (legacy method for backward compatibility)"""
         logger.info("📁 Fetching a random category...")
         categories = list(self.db.categories.find({"is_active": True}))
 
@@ -86,6 +94,34 @@ class BlogAutomationRunner:
 
         category = random.choice(categories)
         logger.info(f"✓ Selected category: {category['name']}")
+        return category
+
+    def get_category_for_publication(self, publication) -> Optional[Dict[str, Any]]:
+        """
+        Get a random active category that belongs to this publication
+
+        Args:
+            publication: PublicationConfig instance
+
+        Returns:
+            Category dict or None if no categories available
+        """
+        # If publication has specific categories, filter by them
+        if publication.categories:
+            categories = list(self.db.categories.find({
+                "is_active": True,
+                "name": {"$in": publication.categories}
+            }))
+        else:
+            # Legacy mode: all categories
+            categories = list(self.db.categories.find({"is_active": True}))
+
+        if not categories:
+            logger.warning(f"No active categories found for publication: {publication.name}")
+            return None
+
+        category = random.choice(categories)
+        logger.info(f"✓ Selected category: {category['name']} for {publication.name}")
         return category
 
     def generate_topic(self, category_name: str, category_description: str = "") -> Optional[str]:
@@ -375,101 +411,211 @@ class BlogAutomationRunner:
             logger.error(f"❌ Error during publishing: {str(e)}")
             return False
 
-    def run(self) -> int:
-        """Main execution flow
+    def publish_blog_to_publication(
+        self,
+        publication,
+        blog_data: Dict[str, Any],
+        cover_image_url: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Publish a blog to a specific Hashnode publication
+
+        Args:
+            publication: PublicationConfig instance
+            blog_data: Blog content data
+            cover_image_url: Optional cover image URL
 
         Returns:
-            Exit code (0 for success, non-zero for errors)
+            Result dict with post_id and url if successful, None otherwise
         """
-        logger.info("=" * 60)
-        logger.info("🚀 BLOG AUTOMATION SCRIPT STARTED")
-        logger.info("=" * 60)
-        start_time = time.time()
+        logger.info(f"🚀 Publishing to {publication.name}...")
 
         try:
-            # Step 1: Get category
-            try:
-                category = self.get_random_category()
-            except Exception as e:
-                logger.error(f"Failed to get category: {str(e)}")
-                return EXIT_NO_CATEGORIES
+            # Create publication-specific Hashnode service
+            hashnode = HashnodeService(
+                api_token=publication.api_token,
+                publication_id=publication.publication_id,
+                publication_name=publication.name
+            )
+
+            # Publish
+            result = hashnode.publish_post(
+                title=blog_data['title'],
+                content=blog_data['content'],
+                tags=blog_data.get('tags', []),
+                cover_image_url=cover_image_url,
+                meta_description=blog_data.get('meta_description', ''),
+                seo_title=blog_data.get('seo_title')
+            )
+
+            if result and 'post_id' in result:
+                logger.info(f"✓ Published to {publication.name}!")
+                logger.info(f"   URL: {result.get('url', 'N/A')}")
+                return result
+            else:
+                logger.error(f"❌ Failed to publish to {publication.name}")
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Error publishing to {publication.name}: {str(e)}")
+            return None
+
+    def run_single_publication(self, publication) -> bool:
+        """
+        Run complete blog generation and publishing flow for a single publication
+
+        Args:
+            publication: PublicationConfig instance
+
+        Returns:
+            True if successful, False otherwise
+        """
+        logger.info("=" * 60)
+        logger.info(f"📚 PUBLICATION: {publication.name}")
+        logger.info(f"📂 Categories: {', '.join(publication.categories)}")
+        logger.info("=" * 60)
+
+        try:
+            # Step 1: Get category for this publication
+            category = self.get_category_for_publication(publication)
+            if not category:
+                logger.error(f"❌ No categories available for {publication.name}")
+                return False
 
             self.sleep("Category selected")
 
             # Step 2: Find unique topic
             topic = self.find_unique_topic(category['name'], category.get('description', ''))
             if not topic:
-                logger.error("❌ FAILED: Could not find a unique topic")
-                return EXIT_NO_UNIQUE_TOPIC
+                logger.error(f"❌ Could not find unique topic for {publication.name}")
+                return False
 
             self.sleep("Unique topic found")
 
             # Step 3: Store topic
-            try:
-                topic_id = self.store_topic(topic, category)
-            except Exception as e:
-                logger.error(f"Failed to store topic: {str(e)}")
-                return EXIT_ERROR
-
+            topic_id = self.store_topic(topic, category)
             self.sleep("Topic stored")
 
-            # Step 4: Generate Image (New Step)
+            # Step 4: Generate image
             cover_image_url = None
             try:
                 cover_image_url = self.generate_image_with_retry(topic, category['name'])
             except Exception as e:
-                logger.error(f"Failed during image generation process: {e}")
-                # We continue even if image generation fails
-            
-            self.sleep("Image generation step completed")
+                logger.error(f"Image generation failed: {e}")
+                # Continue without image
 
-            # Step 5: Generate blog
-            try:
-                blog_data = self.generate_blog(topic_id, topic, category)
-                if not blog_data:
-                    logger.error("❌ FAILED: Could not generate blog content")
-                    return EXIT_BLOG_GENERATION_FAILED
-            except Exception as e:
-                logger.error(f"Failed to generate blog: {str(e)}")
-                return EXIT_BLOG_GENERATION_FAILED
+            self.sleep("Image generation completed")
+
+            # Step 5: Generate blog content
+            blog_data = self.generate_blog(topic_id, topic, category)
+            if not blog_data:
+                logger.error(f"❌ Could not generate blog for {publication.name}")
+                return False
 
             self.sleep("Blog content generated")
 
-            # Step 6: Store blog
-            try:
-                blog_id = self.store_blog(blog_data, topic_id, category, cover_image_url)
-            except Exception as e:
-                logger.error(f"Failed to store blog: {str(e)}")
-                return EXIT_ERROR
-
+            # Step 6: Store blog in database (before publishing)
+            blog_id = self.store_blog(blog_data, topic_id, category, cover_image_url)
             self.sleep("Blog stored")
 
-            # Step 7: Publish blog
-            try:
-                success = self.publish_blog(blog_id, blog_data, cover_image_url)
-                if not success:
-                    logger.error("❌ FAILED: Could not publish blog")
-                    return EXIT_PUBLISH_FAILED
-            except Exception as e:
-                logger.error(f"Failed to publish blog: {str(e)}")
-                return EXIT_PUBLISH_FAILED
+            # Step 7: Publish to this specific publication
+            result = self.publish_blog_to_publication(publication, blog_data, cover_image_url)
 
-            # Update topic status to completed
-            try:
+            if result:
+                # Update blog with publication info
+                self.db.blogs.update_one(
+                    {"_id": ObjectId(blog_id)},
+                    {
+                        "$set": {
+                            f"publications.{publication.name}": {
+                                "status": "PUBLISHED",
+                                "hashnode_post_id": result.get('post_id'),
+                                "hashnode_url": result.get('url'),
+                                "published_at": datetime.now(timezone.utc)
+                            },
+                            "updated_at": datetime.now(timezone.utc)
+                        }
+                    }
+                )
+
+                # Update topic status
                 self.db.topics.update_one(
                     {"_id": ObjectId(topic_id)},
-                    {"$set": {"status": "COMPLETED", "updated_at": datetime.now(timezone.utc)}}
+                    {"$set": {"status": "COMPLETED"}}
                 )
-            except Exception as e:
-                logger.warning(f"Failed to update topic status: {str(e)}")
 
-            # Success!
+                logger.info(f"✅ {publication.name} - COMPLETED")
+                return True
+            else:
+                logger.error(f"❌ {publication.name} - FAILED")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error in {publication.name}: {str(e)}")
+            return False
+
+    def run(self) -> int:
+        """
+        Main execution flow - processes all active publications
+
+        Returns:
+            Exit code (0 for success, non-zero for errors)
+        """
+        logger.info("=" * 60)
+        logger.info("🚀 MULTI-PUBLICATION BLOG AUTOMATION STARTED")
+        logger.info(f"📊 Processing {len(self.publications)} publications")
+        logger.info("=" * 60)
+
+        start_time = time.time()
+        results = []
+
+        try:
+            for idx, publication in enumerate(self.publications, 1):
+                # Skip inactive publications
+                if not publication.is_active:
+                    logger.info(f"⏭️  Skipping inactive publication: {publication.name}")
+                    continue
+
+                logger.info(f"\n{'='*60}")
+                logger.info(f"📍 Publication {idx}/{len(self.publications)}")
+                logger.info(f"{'='*60}\n")
+
+                # Run blog generation and publishing for this publication
+                success = self.run_single_publication(publication)
+                results.append({
+                    'publication': publication.name,
+                    'success': success
+                })
+
+                # Wait between publications (but not after the last one)
+                active_pubs = [p for p in self.publications if p.is_active]
+                is_last = (idx == len(active_pubs))
+
+                if not is_last and publication.wait_after_publish_minutes > 0:
+                    wait_minutes = publication.wait_after_publish_minutes
+                    logger.info(f"⏳ Waiting {wait_minutes} minutes before next publication...")
+                    time.sleep(wait_minutes * 60)
+
+            # Summary
             elapsed_time = time.time() - start_time
+            successful = sum(1 for r in results if r['success'])
+            failed = len(results) - successful
+
+            logger.info("\n" + "=" * 60)
+            logger.info("📊 MULTI-PUBLICATION SUMMARY")
             logger.info("=" * 60)
-            logger.info("✅ BLOG AUTOMATION COMPLETED SUCCESSFULLY!")
+            logger.info(f"✅ Successful: {successful}/{len(results)}")
+            logger.info(f"❌ Failed: {failed}/{len(results)}")
             logger.info(f"⏱️  Total time: {elapsed_time:.2f} seconds")
+
+            for result in results:
+                status = "✅" if result['success'] else "❌"
+                logger.info(f"  {status} {result['publication']}")
+
             logger.info("=" * 60)
-            return EXIT_SUCCESS
+
+            # Return success if at least one publication succeeded
+            return EXIT_SUCCESS if successful > 0 else EXIT_ERROR
 
         except KeyboardInterrupt:
             logger.warning("\n⚠️  Script interrupted by user")

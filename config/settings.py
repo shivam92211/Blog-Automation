@@ -2,11 +2,18 @@
 Configuration settings loaded from environment variables
 """
 import os
+import json
+import logging
 from pathlib import Path
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Setup basic logging for configuration loading
+logging.basicConfig(level=logging.INFO)
+config_logger = logging.getLogger(__name__)
 
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,15 +29,88 @@ if not GEMINI_API_KEY:
 
 GEMINI_TIER_ONE_API_KEY = os.getenv("GEMINI_TIER_ONE_API_KEY")  # Optional, falls back to standard key if needed
 
-# Hashnode
-HASHNODE_API_TOKEN = os.getenv("HASHNODE_API_TOKEN")
-HASHNODE_PUBLICATION_ID = os.getenv("HASHNODE_PUBLICATION_ID")
+# Hashnode Configuration
 HASHNODE_API_URL = "https://gql.hashnode.com/"
 
-if not HASHNODE_API_TOKEN:
-    raise ValueError("HASHNODE_API_TOKEN must be set in environment variables")
-if not HASHNODE_PUBLICATION_ID:
-    raise ValueError("HASHNODE_PUBLICATION_ID must be set in environment variables")
+# Multi-Publication Configuration
+class PublicationConfig:
+    """Configuration for a single Hashnode publication"""
+
+    def __init__(self, config_dict: Dict[str, Any]):
+        self.name = config_dict['name']
+        self.api_token = config_dict['api_token']
+        self.publication_id = config_dict['publication_id']
+        self.categories = config_dict.get('categories', [])
+        self.is_active = config_dict.get('is_active', True)
+        self.wait_after_publish_minutes = config_dict.get('wait_after_publish_minutes', 5)
+
+    def get_category_names(self) -> List[str]:
+        """Get list of category names assigned to this publication"""
+        return self.categories
+
+    def __repr__(self):
+        return f"PublicationConfig(name='{self.name}', categories={len(self.categories)}, active={self.is_active})"
+
+
+# Load Multi-Publication Configuration
+HASHNODE_PUBLICATIONS_JSON = os.getenv("HASHNODE_PUBLICATIONS_JSON")
+HASHNODE_PUBLICATIONS: List[PublicationConfig] = []
+
+if HASHNODE_PUBLICATIONS_JSON:
+    try:
+        publications_data = json.loads(HASHNODE_PUBLICATIONS_JSON)
+        HASHNODE_PUBLICATIONS = [PublicationConfig(pub) for pub in publications_data]
+        config_logger.info(f"✓ Loaded {len(HASHNODE_PUBLICATIONS)} Hashnode publications")
+        for pub in HASHNODE_PUBLICATIONS:
+            config_logger.info(f"  - {pub.name}: {len(pub.categories)} categories")
+    except json.JSONDecodeError as e:
+        config_logger.error(f"Failed to parse HASHNODE_PUBLICATIONS_JSON: {e}")
+        config_logger.warning("Falling back to single publication mode")
+    except KeyError as e:
+        config_logger.error(f"Missing required field in publication config: {e}")
+        config_logger.warning("Falling back to single publication mode")
+
+# Backward Compatibility: Single Publication Mode
+HASHNODE_API_TOKEN = os.getenv("HASHNODE_API_TOKEN")
+HASHNODE_PUBLICATION_ID = os.getenv("HASHNODE_PUBLICATION_ID")
+
+if not HASHNODE_PUBLICATIONS:
+    if HASHNODE_API_TOKEN and HASHNODE_PUBLICATION_ID:
+        config_logger.info("Using single publication mode (backward compatibility)")
+        HASHNODE_PUBLICATIONS = [PublicationConfig({
+            'name': 'Default Publication',
+            'api_token': HASHNODE_API_TOKEN,
+            'publication_id': HASHNODE_PUBLICATION_ID,
+            'categories': [],  # All categories
+            'is_active': True,
+            'wait_after_publish_minutes': 0
+        })]
+    else:
+        raise ValueError(
+            "Either HASHNODE_PUBLICATIONS_JSON or both HASHNODE_API_TOKEN and "
+            "HASHNODE_PUBLICATION_ID must be set in environment variables"
+        )
+
+
+# Validation: Ensure categories are assigned to exactly one publication
+def validate_publication_categories() -> bool:
+    """Validate that each category is assigned to at most one publication"""
+    all_categories = []
+    for pub in HASHNODE_PUBLICATIONS:
+        for cat in pub.categories:
+            if cat in all_categories:
+                raise ValueError(
+                    f"Category '{cat}' is assigned to multiple publications. "
+                    f"Each category must belong to exactly one publication."
+                )
+            all_categories.append(cat)
+
+    if all_categories:
+        config_logger.info(f"✓ Category validation passed: {len(all_categories)} unique categories")
+    return True
+
+# Run validation
+validate_publication_categories()
 
 # NewsData.io API
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
@@ -90,7 +170,7 @@ HISTORY_LOOKBACK_MONTHS = 6  # Check for duplicates in last 6 months
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_TEMPERATURE = 0.7
 GEMINI_MAX_TOKENS_TOPICS = 4000
-GEMINI_MAX_TOKENS_BLOG = 12000  # Increased to prevent truncation of blog content
+GEMINI_MAX_TOKENS_BLOG = 16384  # Increased to prevent truncation of blog content (Gemini 2.5 Flash max)
 API_TIMEOUT = 60
 API_MAX_RETRIES = 3
 
@@ -171,9 +251,14 @@ class Settings:
     # API Keys
     GEMINI_API_KEY = GEMINI_API_KEY
     GEMINI_TIER_ONE_API_KEY = GEMINI_TIER_ONE_API_KEY
+
+    # Hashnode - Multi-Publication Support
+    HASHNODE_PUBLICATIONS = HASHNODE_PUBLICATIONS
+    # Backward Compatibility
     HASHNODE_API_TOKEN = HASHNODE_API_TOKEN
     HASHNODE_PUBLICATION_ID = HASHNODE_PUBLICATION_ID
     HASHNODE_API_URL = HASHNODE_API_URL
+
     NEWSDATA_API_KEY = NEWSDATA_API_KEY
 
     # NewsData

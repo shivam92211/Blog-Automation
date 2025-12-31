@@ -147,7 +147,19 @@ class Blog(MongoDocument):
         cover_image_url: Optional[str] = None,
         cover_image_local_path: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Create a new blog document"""
+        """Create a new blog document
+
+        Multi-Publication Support:
+        - publications: Dict storing publication-specific metadata
+          Format: {
+            "Publication Name": {
+              "status": "PUBLISHED",
+              "hashnode_post_id": "...",
+              "hashnode_url": "...",
+              "published_at": datetime
+            }
+          }
+        """
         return {
             "topic_id": topic_id,
             "title": title,
@@ -156,11 +168,17 @@ class Blog(MongoDocument):
             "tags": tags or [],
             "word_count": word_count,
             "status": status.value if isinstance(status, BlogStatus) else status,
+
+            # Multi-publication support
+            "publications": {},  # Publication-specific metadata
+
+            # Backward compatibility (deprecated, use publications instead)
             "hashnode_post_id": None,
             "hashnode_url": None,
+            "published_at": None,
+
             "cover_image_url": cover_image_url,
             "cover_image_local_path": cover_image_local_path,
-            "published_at": None,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
