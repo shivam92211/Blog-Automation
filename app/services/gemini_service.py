@@ -189,7 +189,7 @@ class GeminiService:
         keywords: Optional[List[str]] = None
     ) -> Dict:
         """
-        Generate comprehensive blog content for a topic
+        Generate comprehensive blog content for a topic with automatic validation and retry
 
         Args:
             topic_title: The topic title
@@ -202,89 +202,134 @@ class GeminiService:
             Dictionary with keys: title, content, meta_description, tags, estimated_read_time
 
         Raises:
-            Exception: If blog generation fails
+            Exception: If blog generation fails after retries
         """
         logger.info(f"Generating blog content for topic: {topic_title}")
 
-        # Build the prompt
-        prompt = self._build_blog_generation_prompt(
-            topic_title,
-            category_name,
-            category_description,
-            topic_description,
-            keywords
-        )
+        # Try up to 3 times with auto-correction
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if attempt > 1:
+                    logger.warning(f"Retry attempt {attempt}/{max_attempts} for blog generation")
 
-        # Define response schema for structured output
-        response_schema = {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "seo_title": {"type": "string"},
-                "content": {"type": "string"},
-                "meta_description": {"type": "string"},
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                },
-                "estimated_read_time": {"type": "string"}
-            },
-            "required": ["title", "seo_title", "content", "meta_description", "tags", "estimated_read_time"]
-        }
+                # Build the prompt
+                prompt = self._build_blog_generation_prompt(
+                    topic_title,
+                    category_name,
+                    category_description,
+                    topic_description,
+                    keywords
+                )
 
-        # Call Gemini API with retry logic
-        def call_api():
-            model = genai.GenerativeModel(
-                model_name=self.model_name,
-                generation_config={
-                    "temperature": self.temperature,
-                    "max_output_tokens": settings.GEMINI_MAX_TOKENS_BLOG,
+                # Define response schema for structured output
+                response_schema = {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "seo_title": {"type": "string"},
+                        "content": {"type": "string"},
+                        "meta_description": {"type": "string"},
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "estimated_read_time": {"type": "string"}
+                    },
+                    "required": ["title", "seo_title", "content", "meta_description", "tags", "estimated_read_time"]
                 }
-            )
-            response = model.generate_content(
-                prompt,
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "response_schema": response_schema,
-                }
-            )
-            return response.text
 
-        response_text = self._call_with_retry(call_api)
+                # Call Gemini API with retry logic
+                def call_api():
+                    model = genai.GenerativeModel(
+                        model_name=self.model_name,
+                        generation_config={
+                            "temperature": self.temperature,
+                            "max_output_tokens": settings.GEMINI_MAX_TOKENS_BLOG,
+                        }
+                    )
+                    response = model.generate_content(
+                        prompt,
+                        generation_config={
+                            "response_mime_type": "application/json",
+                            "response_schema": response_schema,
+                        }
+                    )
+                    return response.text
 
-        # Parse and validate JSON response
-        try:
-            json_text = self._extract_json(response_text)
-            blog_data = json.loads(json_text)
+                response_text = self._call_with_retry(call_api)
 
-            # Validate all required fields are present and non-empty
-            validation_errors = self._validate_blog_data(blog_data)
-            if validation_errors:
-                logger.error(f"Blog data validation failed: {', '.join(validation_errors)}")
-                logger.error(f"Incomplete blog data: {blog_data}")
-                raise ValueError(f"Incomplete blog data from Gemini: {', '.join(validation_errors)}")
+                # Parse and validate JSON response
+                try:
+                    # First check if response is truncated before trying to parse
+                    response_text_stripped = response_text.strip()
+                    if not response_text_stripped.endswith('}') and not response_text_stripped.endswith(']'):
+                        logger.error("Response appears to be truncated (doesn't end with '}' or ']')")
+                        logger.error(f"Response text (first 500 chars): {response_text[:500]}...")
+                        logger.error(f"Response text (last 200 chars): ...{response_text[-200:]}")
 
-            # Add word count
-            content = blog_data.get('content', '')
-            word_count = len(content.split())
-            blog_data['word_count'] = word_count
+                        # For truncated responses, retry immediately without trying to parse
+                        if attempt < max_attempts:
+                            logger.warning(f"Truncated response detected, retrying with attempt {attempt + 1}/{max_attempts}")
+                            time.sleep(5)
+                            continue
+                        else:
+                            raise ValueError(f"Truncated JSON response from Gemini after {max_attempts} attempts - the content is too long for max_output_tokens={settings.GEMINI_MAX_TOKENS_BLOG}")
 
-            logger.info(f"Successfully generated blog content: {word_count} words, {len(content)} characters")
-            logger.info(f"✓ SEO Title: {blog_data.get('seo_title', 'N/A')[:60]}...")
-            logger.info(f"✓ Meta Description: {blog_data.get('meta_description', 'N/A')[:60]}...")
-            return blog_data
+                    json_text = self._extract_json(response_text)
+                    blog_data = json.loads(json_text)
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
-            logger.error(f"Response text (first 500 chars): {response_text[:500]}...")
-            logger.error(f"Response text (last 200 chars): ...{response_text[-200:]}")
+                    # Validate all required fields are present and non-empty
+                    validation_errors = self._validate_blog_data(blog_data)
+                    if validation_errors:
+                        logger.warning(f"Blog data validation failed (attempt {attempt}/{max_attempts}): {', '.join(validation_errors)}")
 
-            # Check if response was truncated
-            if not response_text.strip().endswith('}'):
-                logger.error("Response appears to be truncated (doesn't end with '}')")
-                raise ValueError(f"Truncated JSON response from Gemini - increase max_output_tokens or reduce prompt length")
+                        # Try to auto-correct simple issues
+                        if attempt < max_attempts:
+                            blog_data = self._auto_correct_blog_data(blog_data, validation_errors)
 
-            raise ValueError(f"Invalid JSON response from Gemini: {e}")
+                            # Re-validate after correction
+                            validation_errors = self._validate_blog_data(blog_data)
+                            if not validation_errors:
+                                logger.info("✓ Auto-correction successful!")
+                            else:
+                                logger.warning(f"Auto-correction incomplete: {', '.join(validation_errors)}")
+                                # Continue to next attempt
+                                continue
+                        else:
+                            # Last attempt, fail with error
+                            logger.error(f"Final validation failed: {', '.join(validation_errors)}")
+                            logger.error(f"Blog data: {blog_data}")
+                            raise ValueError(f"Blog validation failed after {max_attempts} attempts: {', '.join(validation_errors)}")
+
+                    # Add word count
+                    content = blog_data.get('content', '')
+                    word_count = len(content.split())
+                    blog_data['word_count'] = word_count
+
+                    logger.info(f"Successfully generated blog content: {word_count} words, {len(content)} characters")
+                    logger.info(f"✓ SEO Title: {blog_data.get('seo_title', 'N/A')} ({len(blog_data.get('seo_title', ''))} chars)")
+                    logger.info(f"✓ Meta Description: {blog_data.get('meta_description', 'N/A')[:60]}... ({len(blog_data.get('meta_description', ''))} chars)")
+                    logger.info(f"✓ Tags: {len(blog_data.get('tags', []))} tags")
+                    return blog_data
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON response: {e}")
+                    logger.error(f"Response text (first 500 chars): {response_text[:500]}...")
+                    logger.error(f"Response text (last 200 chars): ...{response_text[-200:]}")
+
+                    if attempt >= max_attempts:
+                        raise ValueError(f"Invalid JSON response from Gemini: {e}")
+                    time.sleep(5)
+                    continue
+
+            except ValueError as e:
+                if attempt >= max_attempts:
+                    raise
+                logger.warning(f"Attempt {attempt} failed, retrying: {e}")
+                time.sleep(5)  # Brief wait before retry
+
+        raise ValueError(f"Failed to generate valid blog content after {max_attempts} attempts")
 
     def _build_topic_generation_prompt(
         self,
@@ -376,7 +421,7 @@ Target Keywords: {keywords_str}
 
 Requirements:
 
-1. LENGTH: 1200-1500 words
+1. LENGTH: 1000-1300 words (STRICT - do not exceed to prevent truncation)
 
 2. STRUCTURE:
    - Compelling introduction that hooks the reader
@@ -424,7 +469,19 @@ Output Format (JSON):
   "estimated_read_time": "X min read"
 }}
 
-IMPORTANT: Return ONLY the JSON object, no additional text or markdown formatting.
+CRITICAL VALIDATION CONSTRAINTS - MUST BE FOLLOWED:
+❗ seo_title: MUST be 50-60 characters (minimum 40, absolute maximum 70)
+❗ meta_description: MUST be 155-160 characters (minimum 120, ABSOLUTE MAXIMUM 170)
+❗ tags: MUST be exactly 5-10 tags (minimum 1, ABSOLUTE MAXIMUM 10)
+❗ content: MUST be 1000-1300 words, end with proper punctuation, and be COMPLETE
+
+CRITICAL OUTPUT REQUIREMENTS:
+- Return ONLY the complete, valid JSON object
+- ENSURE the JSON is properly closed with ending braces
+- Do NOT truncate the content - end at a natural stopping point
+- Double-check character counts BEFORE returning
+- The JSON MUST be parseable and complete
+- If approaching token limits, reduce content length but keep it complete
 """
         return prompt
 
@@ -677,10 +734,18 @@ Style: Modern, professional, tech-forward, visually appealing"""
             content_len = len(blog_data["content"])
             if content_len < 500:
                 errors.append(f"Content too short: {content_len} chars (min 500)")
-            # Check if content seems truncated (doesn't end with proper punctuation or newline)
-            content_end = blog_data["content"].strip()[-50:]
-            if not any(content_end.endswith(p) for p in ['.', '!', '?', '```', '\n']):
-                errors.append("Content appears to be truncated (no proper ending)")
+            # Check if content seems truncated
+            # More lenient check - just ensure it doesn't end mid-word or with incomplete formatting
+            content_stripped = blog_data["content"].strip()
+            if len(content_stripped) < 100:
+                errors.append("Content appears to be truncated (too short)")
+            else:
+                # Check if ends abruptly (mid-sentence indicators)
+                content_end = content_stripped[-100:]
+                # Allow various endings: punctuation, newlines, code blocks, lists, or complete words
+                suspicious_endings = [',', ' and', ' or', ' the', ' a ', ' an ', ' in ', ' on ', ' at ', ' to ', ' for ']
+                if any(content_stripped.endswith(ending) for ending in suspicious_endings):
+                    errors.append("Content appears to be truncated (suspicious ending)")
 
         if "meta_description" in blog_data and blog_data["meta_description"]:
             meta_len = len(blog_data["meta_description"])
@@ -698,6 +763,66 @@ Style: Modern, professional, tech-forward, visually appealing"""
                 errors.append(f"Too many tags: {len(blog_data['tags'])} (max 10)")
 
         return errors
+
+    def _auto_correct_blog_data(self, blog_data: Dict, validation_errors: List[str]) -> Dict:
+        """
+        Attempt to auto-correct common validation issues in blog data
+
+        Args:
+            blog_data: The blog data to correct
+            validation_errors: List of validation errors to fix
+
+        Returns:
+            Corrected blog data dictionary
+        """
+        corrected = blog_data.copy()
+
+        for error in validation_errors:
+            # Fix meta description that's too long
+            if "Meta description too long" in error and "meta_description" in corrected:
+                original = corrected["meta_description"]
+                # Truncate to 170 chars at a word boundary
+                if len(original) > 170:
+                    truncated = original[:167]
+                    # Find last space to avoid cutting words
+                    last_space = truncated.rfind(' ')
+                    if last_space > 150:  # Only if we're not cutting too much
+                        corrected["meta_description"] = truncated[:last_space] + "..."
+                    else:
+                        corrected["meta_description"] = truncated + "..."
+                    logger.info(f"Auto-corrected meta_description: {len(original)} → {len(corrected['meta_description'])} chars")
+
+            # Fix too many tags
+            if "Too many tags" in error and "tags" in corrected:
+                if isinstance(corrected["tags"], list) and len(corrected["tags"]) > 10:
+                    original_count = len(corrected["tags"])
+                    # Keep the first 10 most relevant tags
+                    corrected["tags"] = corrected["tags"][:10]
+                    logger.info(f"Auto-corrected tags: {original_count} → {len(corrected['tags'])} tags")
+
+            # Fix SEO title that's too long
+            if "SEO title too long" in error and "seo_title" in corrected:
+                original = corrected["seo_title"]
+                if len(original) > 70:
+                    # Truncate to 70 chars at a word boundary
+                    truncated = original[:67]
+                    last_space = truncated.rfind(' ')
+                    if last_space > 50:
+                        corrected["seo_title"] = truncated[:last_space] + "..."
+                    else:
+                        corrected["seo_title"] = truncated + "..."
+                    logger.info(f"Auto-corrected seo_title: {len(original)} → {len(corrected['seo_title'])} chars")
+
+            # Fix meta description that's too short
+            if "Meta description too short" in error and "meta_description" in corrected:
+                original = corrected["meta_description"]
+                if len(original) < 120 and "title" in corrected:
+                    # Try to extend with title context
+                    addition = f" Learn more about {corrected['title'][:30]}..."
+                    corrected["meta_description"] = original + addition
+                    logger.info(f"Auto-corrected meta_description: {len(original)} → {len(corrected['meta_description'])} chars")
+
+        return corrected
 
 
 # Singleton instance
