@@ -255,49 +255,78 @@ class BlogAutomationRunner:
 
         return topic_id
     
-    def generate_image_with_retry(self, topic: str, category_name: str) -> Optional[str]:
+    def generate_image_with_retry(self, topic: str, category_name: str, api_token: str) -> Optional[str]:
         """
         Generate image with retry logic:
         Fail 1 -> wait 2m -> retry
         Fail 2 -> wait 5m -> retry
         Fail 3 -> wait 10m -> retry
         Fail 4 -> exit and return None (proceed without image)
+
+        Args:
+            topic: Blog topic/title
+            category_name: Category name
+            api_token: Hashnode API token for CDN upload
+
+        Returns:
+            Hashnode CDN URL if successful, None otherwise
         """
         if not settings.ENABLE_BLOG_IMAGES:
             return None
-            
+
         logger.info(f"🎨 Starting image generation for: {topic}")
-        
+
         # Retry delays in seconds: 2min, 5min, 10min
         retry_delays = [120, 300, 600]
         max_attempts = len(retry_delays) + 1
-        
+
         for attempt in range(1, max_attempts + 1):
             try:
                 logger.info(f"Image generation attempt {attempt}/{max_attempts}")
-                
+
                 # 1. Generate Image (returns local path)
                 local_path = self.gemini.generate_blog_cover_image(
                     blog_title=topic,
                     keywords=[category_name]
                 )
-                
+
                 if local_path:
-                    # 2. Upload to S3
-                    logger.info("☁️ Uploading image to S3...")
-                    image_url = self.image_service.upload_and_cleanup(local_path, title=topic)
-                    
-                    if image_url:
-                        logger.info(f"✓ Image generated and uploaded: {image_url}")
-                        return image_url
+                    # 2. Upload to both S3 and Hashnode CDN
+                    logger.info("☁️ Uploading image to S3 and Hashnode CDN...")
+
+                    # Get JWT token for this publication (if available)
+                    jwt_token = None
+                    for pub in self.publications:
+                        if pub.api_token == api_token:
+                            jwt_token = pub.jwt_token
+                            break
+
+                    result = self.image_service.upload_and_cleanup(
+                        local_path,
+                        title=topic,
+                        upload_to="both",
+                        hashnode_api_token=api_token,
+                        hashnode_jwt_token=jwt_token
+                    )
+
+                    if result.get("success"):
+                        # Prefer Hashnode CDN URL for publishing to Hashnode
+                        cdn_url = result.get("hashnode_url") or result.get("s3_url")
+                        if cdn_url:
+                            logger.info(f"✓ Image generated and uploaded: {cdn_url}")
+                            if result.get("hashnode_url"):
+                                logger.info("   Using Hashnode CDN URL for publishing")
+                            else:
+                                logger.warning("   Hashnode CDN upload failed, using S3 URL")
+                            return cdn_url
                     else:
-                        logger.warning("Failed to upload image to S3")
+                        logger.warning("Failed to upload image to any CDN")
                 else:
                     logger.warning("Failed to generate image (no path returned)")
-                    
+
             except Exception as e:
                 logger.error(f"Image generation error: {e}")
-            
+
             # If we are here, something failed. Check if we should retry.
             if attempt < max_attempts:
                 wait_time = retry_delays[attempt - 1]
@@ -306,7 +335,7 @@ class BlogAutomationRunner:
                 time.sleep(wait_time)
             else:
                 logger.error("❌ All image generation attempts failed. Proceeding without image.")
-        
+
         return None
 
     def generate_blog(self, topic_id: str, topic_title: str, category: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -499,7 +528,11 @@ class BlogAutomationRunner:
             # Step 4: Generate image
             cover_image_url = None
             try:
-                cover_image_url = self.generate_image_with_retry(topic, category['name'])
+                cover_image_url = self.generate_image_with_retry(
+                    topic,
+                    category['name'],
+                    api_token=publication.api_token
+                )
             except Exception as e:
                 logger.error(f"Image generation failed: {e}")
                 # Continue without image

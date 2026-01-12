@@ -8,6 +8,7 @@ from typing import List, Dict, Optional
 import google.generativeai as genai
 from config import settings
 from config.logging_config import get_logger
+from app.validators.blog_validators import validate_blog_data, analyze_content_structure
 
 logger = get_logger(__name__)
 
@@ -464,14 +465,14 @@ Output Format (JSON):
   "title": "Final optimized blog title (may refine the original)",
   "seo_title": "SEO-optimized title for search engines (50-60 characters, include main keyword)",
   "content": "Full blog content in Markdown format",
-  "meta_description": "SEO meta description (155-160 characters, compelling and keyword-rich)",
+  "meta_description": "SEO meta description (140-156 characters, compelling and keyword-rich)",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
   "estimated_read_time": "X min read"
 }}
 
 CRITICAL VALIDATION CONSTRAINTS - MUST BE FOLLOWED:
 ❗ seo_title: MUST be 50-60 characters (minimum 40, absolute maximum 70)
-❗ meta_description: MUST be 155-160 characters (minimum 120, ABSOLUTE MAXIMUM 170)
+❗ meta_description: MUST be 140-156 characters (Hashnode limit is 156, minimum 120)
 ❗ tags: MUST be exactly 5-10 tags (minimum 1, ABSOLUTE MAXIMUM 10)
 ❗ content: MUST be 1000-1300 words, end with proper punctuation, and be COMPLETE
 
@@ -698,7 +699,16 @@ Style: Modern, professional, tech-forward, visually appealing"""
 
     def _validate_blog_data(self, blog_data: Dict) -> List[str]:
         """
-        Validate blog data to ensure all required fields are present and valid
+        Validate blog data using comprehensive Pydantic-based validation.
+        
+        Checks:
+        - Required fields present and not empty
+        - Field length constraints (title, seo_title, meta_description)
+        - Markdown structure (## and ### headings)
+        - Minimum heading count (3 H2s, 4 total)
+        - Word count (minimum 800 words)
+        - Introduction presence (content before first heading)
+        - Proper content ending (not truncated)
 
         Args:
             blog_data: The generated blog data dictionary
@@ -706,63 +716,48 @@ Style: Modern, professional, tech-forward, visually appealing"""
         Returns:
             List of validation error messages (empty if valid)
         """
+        # First check required fields exist (quick fail before deeper analysis)
         errors = []
-
-        # Check required fields exist
         required_fields = ["title", "seo_title", "content", "meta_description", "tags"]
         for field in required_fields:
             if field not in blog_data:
                 errors.append(f"Missing required field: {field}")
             elif not blog_data[field]:
                 errors.append(f"Empty required field: {field}")
-
-        # Validate specific field requirements
-        if "title" in blog_data and blog_data["title"]:
-            if len(blog_data["title"]) < 10:
-                errors.append(f"Title too short: {len(blog_data['title'])} chars (min 10)")
-            elif len(blog_data["title"]) > 200:
-                errors.append(f"Title too long: {len(blog_data['title'])} chars (max 200)")
-
-        if "seo_title" in blog_data and blog_data["seo_title"]:
-            seo_len = len(blog_data["seo_title"])
-            if seo_len < 40:
-                errors.append(f"SEO title too short: {seo_len} chars (recommended 50-60)")
-            elif seo_len > 70:
-                errors.append(f"SEO title too long: {seo_len} chars (recommended 50-60, max 70)")
-
-        if "content" in blog_data and blog_data["content"]:
-            content_len = len(blog_data["content"])
-            if content_len < 500:
-                errors.append(f"Content too short: {content_len} chars (min 500)")
-            # Check if content seems truncated
-            # More lenient check - just ensure it doesn't end mid-word or with incomplete formatting
-            content_stripped = blog_data["content"].strip()
-            if len(content_stripped) < 100:
-                errors.append("Content appears to be truncated (too short)")
-            else:
-                # Check if ends abruptly (mid-sentence indicators)
-                content_end = content_stripped[-100:]
-                # Allow various endings: punctuation, newlines, code blocks, lists, or complete words
-                suspicious_endings = [',', ' and', ' or', ' the', ' a ', ' an ', ' in ', ' on ', ' at ', ' to ', ' for ']
-                if any(content_stripped.endswith(ending) for ending in suspicious_endings):
-                    errors.append("Content appears to be truncated (suspicious ending)")
-
-        if "meta_description" in blog_data and blog_data["meta_description"]:
-            meta_len = len(blog_data["meta_description"])
-            if meta_len < 120:
-                errors.append(f"Meta description too short: {meta_len} chars (recommended 155-160)")
-            elif meta_len > 170:
-                errors.append(f"Meta description too long: {meta_len} chars (max 170)")
-
-        if "tags" in blog_data:
-            if not isinstance(blog_data["tags"], list):
-                errors.append("Tags must be a list")
-            elif len(blog_data["tags"]) < 1:
-                errors.append("Must have at least 1 tag")
-            elif len(blog_data["tags"]) > 10:
-                errors.append(f"Too many tags: {len(blog_data['tags'])} (max 10)")
-
-        return errors
+        
+        if errors:
+            return errors
+        
+        # Use Pydantic-based validation for comprehensive checks
+        is_valid, validation_errors, validated_data = validate_blog_data(blog_data)
+        
+        if not is_valid:
+            # Log content structure metrics for debugging
+            if "content" in blog_data and blog_data["content"]:
+                metrics = analyze_content_structure(blog_data["content"])
+                logger.warning(
+                    f"Content structure analysis: "
+                    f"H2={metrics.h2_count}, H3={metrics.h3_count}, "
+                    f"words={metrics.word_count}, "
+                    f"has_intro={metrics.has_introduction}, "
+                    f"ends_properly={metrics.content_ends_properly}"
+                )
+                if metrics.heading_titles:
+                    logger.warning(f"Headings found: {metrics.heading_titles[:5]}...")
+            
+            return validation_errors
+        
+        # Update blog_data with computed fields from validation
+        if validated_data:
+            blog_data['word_count'] = validated_data.get('word_count', 0)
+            if 'content_metrics' in validated_data:
+                logger.info(
+                    f"✓ Content structure validated: "
+                    f"{validated_data['content_metrics']['h2_count']} H2 sections, "
+                    f"{validated_data['content_metrics']['word_count']} words"
+                )
+        
+        return []
 
     def _auto_correct_blog_data(self, blog_data: Dict, validation_errors: List[str]) -> Dict:
         """
@@ -776,51 +771,51 @@ Style: Modern, professional, tech-forward, visually appealing"""
             Corrected blog data dictionary
         """
         corrected = blog_data.copy()
+        error_text = ' '.join(validation_errors).lower()
 
-        for error in validation_errors:
-            # Fix meta description that's too long
-            if "Meta description too long" in error and "meta_description" in corrected:
-                original = corrected["meta_description"]
-                # Truncate to 170 chars at a word boundary
-                if len(original) > 170:
-                    truncated = original[:167]
-                    # Find last space to avoid cutting words
-                    last_space = truncated.rfind(' ')
-                    if last_space > 150:  # Only if we're not cutting too much
-                        corrected["meta_description"] = truncated[:last_space] + "..."
-                    else:
-                        corrected["meta_description"] = truncated + "..."
-                    logger.info(f"Auto-corrected meta_description: {len(original)} → {len(corrected['meta_description'])} chars")
+        # Fix meta description that's too long
+        # Matches both old format "Meta description too long" and Pydantic "meta_description: String should have at most 156"
+        if ("meta_description" in error_text and ("too long" in error_text or "at most 156" in error_text or "at most 170" in error_text)) and "meta_description" in corrected:
+            original = corrected["meta_description"]
+            if len(original) > 156:
+                truncated = original[:150]
+                # Find last space to avoid cutting words
+                last_space = truncated.rfind(' ')
+                if last_space > 120:  # Only if we're not cutting too much
+                    corrected["meta_description"] = truncated[:last_space] + "..."
+                else:
+                    corrected["meta_description"] = truncated + "..."
+                logger.info(f"Auto-corrected meta_description: {len(original)} → {len(corrected['meta_description'])} chars")
 
-            # Fix too many tags
-            if "Too many tags" in error and "tags" in corrected:
-                if isinstance(corrected["tags"], list) and len(corrected["tags"]) > 10:
-                    original_count = len(corrected["tags"])
-                    # Keep the first 10 most relevant tags
-                    corrected["tags"] = corrected["tags"][:10]
-                    logger.info(f"Auto-corrected tags: {original_count} → {len(corrected['tags'])} tags")
+        # Fix SEO title that's too long
+        # Matches both "SEO title too long" and Pydantic "seo_title: String should have at most 70"
+        if ("seo_title" in error_text and ("too long" in error_text or "at most 70" in error_text)) and "seo_title" in corrected:
+            original = corrected["seo_title"]
+            if len(original) > 70:
+                truncated = original[:65]
+                last_space = truncated.rfind(' ')
+                if last_space > 50:
+                    corrected["seo_title"] = truncated[:last_space] + "..."
+                else:
+                    corrected["seo_title"] = truncated + "..."
+                logger.info(f"Auto-corrected seo_title: {len(original)} → {len(corrected['seo_title'])} chars")
 
-            # Fix SEO title that's too long
-            if "SEO title too long" in error and "seo_title" in corrected:
-                original = corrected["seo_title"]
-                if len(original) > 70:
-                    # Truncate to 70 chars at a word boundary
-                    truncated = original[:67]
-                    last_space = truncated.rfind(' ')
-                    if last_space > 50:
-                        corrected["seo_title"] = truncated[:last_space] + "..."
-                    else:
-                        corrected["seo_title"] = truncated + "..."
-                    logger.info(f"Auto-corrected seo_title: {len(original)} → {len(corrected['seo_title'])} chars")
+        # Fix too many tags
+        # Matches both "Too many tags" and Pydantic "tags: List should have at most 10"
+        if ("tags" in error_text and ("too many" in error_text or "at most 10" in error_text)) and "tags" in corrected:
+            if isinstance(corrected["tags"], list) and len(corrected["tags"]) > 10:
+                original_count = len(corrected["tags"])
+                corrected["tags"] = corrected["tags"][:10]
+                logger.info(f"Auto-corrected tags: {original_count} → {len(corrected['tags'])} tags")
 
-            # Fix meta description that's too short
-            if "Meta description too short" in error and "meta_description" in corrected:
-                original = corrected["meta_description"]
-                if len(original) < 120 and "title" in corrected:
-                    # Try to extend with title context
-                    addition = f" Learn more about {corrected['title'][:30]}..."
-                    corrected["meta_description"] = original + addition
-                    logger.info(f"Auto-corrected meta_description: {len(original)} → {len(corrected['meta_description'])} chars")
+        # Fix meta description that's too short
+        # Matches both "Meta description too short" and Pydantic "meta_description: String should have at least 120"
+        if ("meta_description" in error_text and ("too short" in error_text or "at least 120" in error_text)) and "meta_description" in corrected:
+            original = corrected["meta_description"]
+            if len(original) < 120 and "title" in corrected:
+                addition = f" Learn more about {corrected['title'][:30]}..."
+                corrected["meta_description"] = original + addition
+                logger.info(f"Auto-corrected meta_description: {len(original)} → {len(corrected['meta_description'])} chars")
 
         return corrected
 

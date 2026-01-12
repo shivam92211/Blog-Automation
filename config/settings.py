@@ -32,6 +32,12 @@ GEMINI_TIER_ONE_API_KEY = os.getenv("GEMINI_TIER_ONE_API_KEY")  # Optional, fall
 # Hashnode Configuration
 HASHNODE_API_URL = "https://gql.hashnode.com/"
 
+# JWT Tokens for Hashnode CDN Upload
+HASHNODE_JWT_TOKENS = {
+    "Shivam": os.getenv("HASHNODE_JWT_SHIVAM", ""),
+    "Gaurav": os.getenv("HASHNODE_JWT_GAURAV", ""),
+}
+
 # Multi-Publication Configuration
 class PublicationConfig:
     """Configuration for a single Hashnode publication"""
@@ -43,6 +49,9 @@ class PublicationConfig:
         self.categories = config_dict.get('categories', [])
         self.is_active = config_dict.get('is_active', True)
         self.wait_after_publish_minutes = config_dict.get('wait_after_publish_minutes', 5)
+
+        # Get JWT token for this publication (for CDN uploads)
+        self.jwt_token = HASHNODE_JWT_TOKENS.get(self.name, "")
 
     def get_category_names(self) -> List[str]:
         """Get list of category names assigned to this publication"""
