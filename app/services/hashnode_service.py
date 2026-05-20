@@ -86,6 +86,11 @@ class HashnodeService:
                     logger.error("All retry attempts exhausted")
                     raise
 
+            except PermissionError as e:
+                # Billing/paywall — retrying won't help, fail immediately.
+                logger.error(f"{e}")
+                raise
+
             except Exception as e:
                 logger.warning(f"Unexpected error (attempt {attempt}/{self.max_retries}): {e}")
                 if attempt < self.max_retries:
@@ -141,20 +146,51 @@ class HashnodeService:
         def call_api():
             headers = {
                 "Authorization": self.api_token,
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "BlogAutomation/1.0 (+https://github.com)"
             }
 
             response = requests.post(
                 self.api_url,
                 json={"query": mutation},
                 headers=headers,
-                timeout=self.timeout
+                timeout=self.timeout,
+                allow_redirects=False
             )
+
+            # Hashnode put the GraphQL API behind a Pro plan on 2026-05-13.
+            # Unpaid publications get a 301 to hashnode.com/announcements/graphql-api.
+            # Detect that explicitly so we don't waste retries on a billing problem.
+            if response.is_redirect or response.is_permanent_redirect:
+                location = response.headers.get("Location", "")
+                raise PermissionError(
+                    f"Hashnode GraphQL API returned HTTP {response.status_code} redirect to {location!r}. "
+                    f"As of 2026-05-13, the public GraphQL API requires a Pro plan on the publication. "
+                    f"Upgrade '{self.publication_name}' at https://hashnode.com/settings/billing "
+                    f"(see https://hashnode.com/changelog/2026-05-13-graphql-api-paid-access)."
+                )
 
             # Raise exception for HTTP errors
             response.raise_for_status()
 
-            data = response.json()
+            # Parse JSON with diagnostic logging on failure
+            try:
+                data = response.json()
+            except ValueError as json_err:
+                body_preview = (response.text or "")[:1000]
+                logger.error(
+                    f"Hashnode returned non-JSON response. "
+                    f"status={response.status_code}, "
+                    f"content-type={response.headers.get('Content-Type')}, "
+                    f"content-length={response.headers.get('Content-Length')}, "
+                    f"body_length={len(response.text or '')}"
+                )
+                logger.error(f"Response body preview: {body_preview!r}")
+                raise Exception(
+                    f"Hashnode returned non-JSON response (HTTP {response.status_code}, "
+                    f"content-type={response.headers.get('Content-Type')}): {json_err}"
+                )
 
             # Check for GraphQL errors
             if "errors" in data:
@@ -410,7 +446,9 @@ class HashnodeService:
 
         headers = {
             "Authorization": self.api_token,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "BlogAutomation/1.0 (+https://github.com)"
         }
 
         response = requests.post(
@@ -421,7 +459,21 @@ class HashnodeService:
         )
 
         response.raise_for_status()
-        data = response.json()
+
+        try:
+            data = response.json()
+        except ValueError as json_err:
+            body_preview = (response.text or "")[:1000]
+            logger.error(
+                f"Hashnode returned non-JSON response. "
+                f"status={response.status_code}, "
+                f"content-type={response.headers.get('Content-Type')}, "
+                f"body_length={len(response.text or '')}"
+            )
+            logger.error(f"Response body preview: {body_preview!r}")
+            raise Exception(
+                f"Hashnode returned non-JSON response (HTTP {response.status_code}): {json_err}"
+            )
 
         if "errors" in data:
             error_msg = data["errors"][0].get("message", "Unknown error")
