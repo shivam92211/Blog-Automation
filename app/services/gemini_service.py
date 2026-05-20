@@ -4,6 +4,7 @@ Handles topic generation and blog content creation
 """
 import json
 import time
+from datetime import datetime
 from typing import List, Dict, Optional
 import google.generativeai as genai
 from config import settings
@@ -371,7 +372,7 @@ Requirements:
 1. Each topic should be specific and actionable (not generic)
 2. Topics should be 8-15 words long
 3. Cover different content angles: how-to, listicle, case-study, tutorial, opinion, comparison, beginner-guide
-4. Make them timely and relevant to 2025
+4. Make them timely and relevant to {datetime.now().year} (current month: {datetime.now().strftime('%B %Y')}). Do NOT reference past years as "future" or "upcoming".
 5. Include a mix of difficulty levels:
    - 2 beginner-friendly topics
    - 3 intermediate topics
@@ -446,7 +447,8 @@ Requirements:
    - Write for humans first, search engines second
 
 5. TECHNICAL ACCURACY:
-   - Ensure all technical information is current (2025)
+   - Ensure all technical information is current as of {datetime.now().strftime('%B %Y')}
+   - When mentioning a year, use {datetime.now().year} (or later) — never reference past years as "the future" or "upcoming"
    - Cite concepts accurately
    - Avoid outdated information or deprecated practices
    - Include code examples if relevant
